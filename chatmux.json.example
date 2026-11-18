@@ -1,0 +1,86 @@
+{
+  "http": { "listen": "127.0.0.1:8080" },
+  "dataDir": "data",
+  "defaultAgent": "helper",
+  "channels": [
+    {
+      "type": "feishu",
+      "name": "feishu",
+      "options": {
+        "appId": "cli_xxxx",
+        "appSecret": "xxxx",
+        "mode": "ws",
+        "allowUsers": ["ou_xxxx"],
+        "allowChats": []
+      }
+    },
+    {
+      "type": "dingtalk",
+      "name": "dingtalk",
+      "options": {
+        "clientId": "dingxxxx",
+        "clientSecret": "xxxx",
+        "allowUsers": []
+      }
+    },
+    {
+      "type": "wecom",
+      "name": "wecom",
+      "options": {
+        "corpId": "wwxxxx",
+        "agentId": 1000002,
+        "secret": "xxxx",
+        "token": "xxxx",
+        "encodingAesKey": "43chars",
+        "callbackPath": "/wecom/callback",
+        "allowUsers": []
+      }
+    },
+    {
+      "type": "telegram",
+      "name": "telegram",
+      "options": {
+        "token": "123456:ABC-xxxx",
+        "allowUsers": []
+      }
+    },
+    {
+      "type": "slack",
+      "name": "slack",
+      "options": {
+        "botToken": "xoxb-xxxx",
+        "appToken": "xapp-xxxx"
+      }
+    },
+    {
+      "type": "discord",
+      "name": "discord",
+      "options": {
+        "token": "MTIzxxxx"
+      }
+    }
+  ],
+  "agents": [
+    {
+      "name": "helper",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "apiKey": "sk-xxxx",
+      "baseUrl": "https://api.openai.com/v1",
+      "system": "You are chatmux, a helpful chat assistant. Reply in the user's language, keep it concise.",
+      "routes": [
+        { "channel": "any" }
+      ]
+    },
+    {
+      "name": "coder",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "apiKey": "sk-ant-xxxx",
+      "system": "You are a senior engineer. Answer with code first, explanation second.",
+      "routes": [
+        { "channel": "telegram", "chatType": "group" }
+      ]
+    }
+  ]
+}
