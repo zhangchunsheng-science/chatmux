@@ -33,8 +33,8 @@ type anImage struct {
 }
 
 type anContentBlock struct {
-	Type  string  `json:"type"`
-	Text  string  `json:"text,omitempty"`
+	Type   string   `json:"type"`
+	Text   string   `json:"text,omitempty"`
 	Source *anImage `json:"source,omitempty"`
 }
 
@@ -112,12 +112,12 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Delta, erro
 	}
 
 	body, _ := json.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": maxTokens,
+		"model":       model,
+		"max_tokens":  maxTokens,
 		"temperature": temp,
-		"stream":     true,
-		"system":     req.System,
-		"messages":   a.buildMessages(req),
+		"stream":      true,
+		"system":      req.System,
+		"messages":    a.buildMessages(req),
 	})
 	httpReq, err := http.NewRequestWithContext(ctx, "POST",
 		strings.TrimRight(base, "/")+"/v1/messages", bytes.NewReader(body))

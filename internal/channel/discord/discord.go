@@ -21,14 +21,15 @@ import (
 )
 
 type Options struct {
-	Token     string   `json:"token"` // bot token
-	APIBase   string   `json:"apiBase"`
-	Gateway   string   `json:"gateway"`   // default wss://gateway.discord.gg/?v=10&encoding=json
-	DataDir   string   `json:"dataDir"`
+	Token      string   `json:"token"` // bot token
+	APIBase    string   `json:"apiBase"`
+	Gateway    string   `json:"gateway"` // default wss://gateway.discord.gg/?v=10&encoding=json
+	DataDir    string   `json:"dataDir"`
 	AllowUsers []string `json:"allowUsers"`
 }
 
 type Discord struct {
+	name   string // instance name (defaults to "discord")
 	opts   Options
 	client *http.Client
 	seen   *dedup.Store
@@ -56,13 +57,22 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 		o.DataDir = "data"
 	}
 	return &Discord{
+		name:   "discord",
 		opts:   o,
 		client: &http.Client{Timeout: 30 * time.Second},
 		seen:   dedup.New(strings.TrimSuffix(o.DataDir, "/")+"/discord-seen.json", 8*time.Hour, 5000),
 	}, nil
 }
 
-func (d *Discord) Name() string { return "discord" }
+func (d *Discord) Name() string {
+	if d.name != "" {
+		return d.name
+	}
+	return "discord"
+}
+
+// SetName gives the instance its config name (multi-account support).
+func (d *Discord) SetName(n string) { d.name = n }
 
 func (d *Discord) Healthy() bool {
 	d.mu.Lock()
@@ -189,8 +199,8 @@ func (d *Discord) runGateway(ctx context.Context, dialer *websocket.Dialer, out 
 				} else {
 					// IDENTIFY
 					_ = send(2, map[string]any{
-						"token": d.opts.Token,
-						"intents": intents,
+						"token":      d.opts.Token,
+						"intents":    intents,
 						"properties": map[string]string{"os": "darwin", "browser": "chatmux", "device": "chatmux"},
 					})
 				}
@@ -199,7 +209,9 @@ func (d *Discord) runGateway(ctx context.Context, dialer *websocket.Dialer, out 
 				case "READY":
 					var t struct {
 						SessionID string `json:"session_id"`
-						User      struct{ ID string `json:"id"` } `json:"user"`
+						User      struct {
+							ID string `json:"id"`
+						} `json:"user"`
 					}
 					_ = json.Unmarshal(f.data, &t)
 					*sessionID = t.SessionID
@@ -240,8 +252,10 @@ func (d *Discord) toMessage(data json.RawMessage) (channel.Message, bool) {
 			Username string `json:"username"`
 		} `json:"author"`
 		Content   string `json:"content"`
-		Type       int    `json:"type"`
-		Reference  *struct{ MessageID string `json:"message_id"` } `json:"referenced_message"`
+		Type      int    `json:"type"`
+		Reference *struct {
+			MessageID string `json:"message_id"`
+		} `json:"referenced_message"`
 		Attachments []struct {
 			URL      string `json:"url"`
 			Filename string `json:"filename"`
@@ -271,7 +285,7 @@ func (d *Discord) toMessage(data json.RawMessage) (channel.Message, bool) {
 
 	msg := channel.Message{
 		ID:          m.ID,
-		Channel:     "discord",
+		Channel:     d.name,
 		ChatID:      m.ChannelID,
 		ChatType:    "group", // DM channels look the same at rest level; fine
 		UserID:      m.Author.ID,
@@ -302,8 +316,8 @@ func contains(xs []string, v string) bool {
 // ---- outbound ----
 
 type Sender struct {
-	d       *Discord
-	chatID  string
+	d      *Discord
+	chatID string
 }
 
 func (d *Discord) SenderFor(msg channel.Message) (channel.Sender, error) {
@@ -320,7 +334,9 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 		if i == 0 && opts.ReplyTo != "" {
 			body["message_reference"] = map[string]string{"message_id": opts.ReplyTo}
 		}
-		var res struct{ ID string `json:"id"` }
+		var res struct {
+			ID string `json:"id"`
+		}
 		if err := s.d.rest(ctx, "POST", "/channels/"+s.chatID+"/messages", body, &res); err != nil {
 			return lastID, err
 		}
@@ -386,4 +402,3 @@ func chunk(text string, max int) []string {
 	}
 	return chunks
 }
-

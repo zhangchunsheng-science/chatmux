@@ -42,12 +42,14 @@ func (o *OpenAI) apiKey(req Request) string {
 }
 
 type oaMsgContent struct {
-	Type     string     `json:"type,omitempty"`
-	Text     string     `json:"text,omitempty"`
+	Type     string      `json:"type,omitempty"`
+	Text     string      `json:"text,omitempty"`
 	ImageURL *oaImageURL `json:"image_url,omitempty"`
 }
 
-type oaImageURL struct{ URL string `json:"url"` }
+type oaImageURL struct {
+	URL string `json:"url"`
+}
 
 type oaMessage struct {
 	Role    string          `json:"role"`
@@ -103,10 +105,10 @@ func dataURLFor(p string) string {
 }
 
 type oaStreamReq struct {
-	Model    string      `json:"model"`
-	Messages []oaMessage `json:"messages"`
-	Stream   bool        `json:"stream"`
-	Options  oaOptions   `json:"-"`
+	Model     string          `json:"model"`
+	Messages  []oaMessage     `json:"messages"`
+	Stream    bool            `json:"stream"`
+	Options   oaOptions       `json:"-"`
 	StreamOpt oaStreamOptions `json:"stream_options"`
 }
 
@@ -133,9 +135,9 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Delta, error) 
 		temp = 0.7
 	}
 	body, _ := json.Marshal(map[string]any{
-		"model":    model,
-		"messages": o.buildMessages(req),
-		"stream":   true,
+		"model":          model,
+		"messages":       o.buildMessages(req),
+		"stream":         true,
 		"stream_options": map[string]bool{"include_usage": true},
 		"max_tokens":     req.MaxTokens,
 		"temperature":    temp,

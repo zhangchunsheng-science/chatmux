@@ -16,6 +16,7 @@ import (
 type Attachment struct {
 	Type string // "image" | "file" | "audio" | "video"
 	Name string
+	Key  string // platform file key (feishu image_key, telegram file_id, ...)
 	URL  string // remote URL if any
 	Path string // local path if the channel already downloaded it
 	Size int64
@@ -24,16 +25,16 @@ type Attachment struct {
 // Message is the normalized inbound chat message, produced by every
 // channel adapter and consumed by the router/agent runtime.
 type Message struct {
-	ID          string        // platform message id (for reply/quote/react)
-	Channel     string        // channel name, e.g. "feishu"
-	ChatID      string        // conversation id, stable per chat/group
-	ChatType    string        // "p2p" | "group"
-	ThreadID    string        // thread/topic root id, "" for flat chats
-	UserID      string        // sender id on the platform
-	UserName    string        // display name, best effort
-	Text        string        // normalized plain text, mentions stripped
-	MentionedMe bool          // true if the bot was @-mentioned
-	AtUserIDs   []string      // user ids @-mentioned in the text (excluding me)
+	ID          string   // platform message id (for reply/quote/react)
+	Channel     string   // channel name, e.g. "feishu"
+	ChatID      string   // conversation id, stable per chat/group
+	ChatType    string   // "p2p" | "group"
+	ThreadID    string   // thread/topic root id, "" for flat chats
+	UserID      string   // sender id on the platform
+	UserName    string   // display name, best effort
+	Text        string   // normalized plain text, mentions stripped
+	MentionedMe bool     // true if the bot was @-mentioned
+	AtUserIDs   []string // user ids @-mentioned in the text (excluding me)
 	Attachments []Attachment
 	Timestamp   time.Time
 	Raw         any // platform-native event, for adapters/debug only
@@ -74,4 +75,12 @@ type Channel interface {
 // callback mode, ...): endpoints mounted on the shared HTTP server.
 type HTTPMounter interface {
 	Endpoints() map[string]http.Handler
+}
+
+// AttachmentDownloader is implemented by channels whose attachments
+// need an authenticated API call to fetch (feishu image_key, telegram
+// file_id). Runtime downloads images into DataDir before vision calls.
+type AttachmentDownloader interface {
+	// Download fetches one attachment's bytes; returns mime type.
+	Download(ctx context.Context, att Attachment) (data []byte, mime string, err error)
 }

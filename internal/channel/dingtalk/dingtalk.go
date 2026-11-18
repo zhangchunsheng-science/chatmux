@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	dingclient "github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
+	dingclient "github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/dedup"
@@ -34,6 +34,7 @@ type Options struct {
 }
 
 type DingTalk struct {
+	name   string // instance name (defaults to "dingtalk")
 	opts   Options
 	client *http.Client
 	seen   *dedup.Store
@@ -57,13 +58,22 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 		o.DataDir = "data"
 	}
 	return &DingTalk{
+		name:   "dingtalk",
 		opts:   o,
 		client: &http.Client{Timeout: 30 * time.Second},
 		seen:   dedup.New(strings.TrimSuffix(o.DataDir, "/")+"/dingtalk-seen.json", 8*time.Hour, 5000),
 	}, nil
 }
 
-func (d *DingTalk) Name() string { return "dingtalk" }
+func (d *DingTalk) Name() string {
+	if d.name != "" {
+		return d.name
+	}
+	return "dingtalk"
+}
+
+// SetName gives the instance its config name (multi-account support).
+func (d *DingTalk) SetName(n string) { d.name = n }
 
 func (d *DingTalk) Healthy() bool {
 	d.mu.Lock()
@@ -115,7 +125,7 @@ func (d *DingTalk) toMessage(data *chatbot.BotCallbackDataModel) (channel.Messag
 	text := strings.TrimSpace(data.Text.Content)
 	return channel.Message{
 		ID:        data.MsgId,
-		Channel:   "dingtalk",
+		Channel:   d.name,
 		ChatID:    data.ConversationId,
 		ChatType:  chatType,
 		UserID:    data.SenderStaffId,
@@ -138,9 +148,9 @@ func contains(xs []string, v string) bool {
 // ---- outbound via sessionWebhook ----
 
 type Sender struct {
-	d            *DingTalk
-	sessionHook  string
-	expiry       int64
+	d           *DingTalk
+	sessionHook string
+	expiry      int64
 }
 
 func (d *DingTalk) SenderFor(msg channel.Message) (channel.Sender, error) {

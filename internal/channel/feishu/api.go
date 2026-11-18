@@ -144,6 +144,27 @@ func (a *api) do(req *http.Request, out any) error {
 	return nil
 }
 
+// download fetches a binary resource (im/v1/images/:key) and returns the
+// raw bytes plus the Content-Type.
+func (a *api) download(ctx context.Context, path string) ([]byte, string, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", a.base+path, nil)
+	tok, err := a.tenantToken(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("feishu %s: %s %s", path, resp.Status, truncate(string(b), 300))
+	}
+	return b, resp.Header.Get("Content-Type"), nil
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -246,7 +267,7 @@ func cardContent(title, text string) string {
 		"config": map[string]any{"wide_screen_mode": true},
 		"elements": []any{
 			map[string]any{
-				"tag": "markdown",
+				"tag":     "markdown",
 				"content": text,
 			},
 		},

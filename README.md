@@ -2,7 +2,7 @@
 
 **一个二进制，多个聊天平台，一个大脑。**
 
-chatmux 是一个 Go 编写的多平台 IM ↔ AI 模型网关：把飞书、钉钉、企业微信、Telegram、Slack、Discord 等聊天平台桥接到大模型（OpenAI 兼容接口 / Anthropic），支持流式回复、按话题的会话隔离、持久化去重和黑白名单。
+chatmux 是一个 Go 编写的多平台 IM ↔ AI 模型网关：把飞书、钉钉、企业微信、Telegram、Slack、Discord 等聊天平台桥接到大模型（OpenAI 兼容接口 / Anthropic）或无头编码 CLI（claude / codex），支持流式回复、按话题的会话隔离、持久化去重、定时任务、用量记账和黑白名单。
 
 设计参考并致敬两个项目：
 
@@ -17,16 +17,24 @@ chatmux 是一个 Go 编写的多平台 IM ↔ AI 模型网关：把飞书、钉
 飞书(WS/长连接)  ─┐                                  ┌─> OpenAI 兼容 API
 钉钉(Stream)     ─┤   Channel ─> Bus ─> Agent       ├─> Anthropic API
 企业微信(回调)    ─┼─  适配器        归一化   Runtime ─┤      (SSE 流式)
-Telegram(轮询)   ─┤   (去重/解析)  消息总线 (会话/排队) └─> 任意 baseUrl 网关
-Slack(SocketMode)─┤                                  (DeepSeek/Moonshot/vLLM/one-api…)
-Discord(Gateway) ─┘
+Telegram(轮询)   ─┤   (去重/解析)  消息总线 (会话/排队) ├─> claude -p --output-format stream-json
+Slack(SocketMode)─┤                                  │    codex exec --json
+Discord(Gateway) ─┘                                  │    (无头 CLI 代理，自带会话续跑)
+                                        cron 定时 ────┘    generic: 任意行协议二进制
 ```
 
-- **`internal/channel`** — `Channel`/`Sender` 接口 + 六个平台适配器
+- **`internal/channel`** — `Channel`/`Sender`/`AttachmentDownloader` 接口 + 六个平台适配器
 - **`internal/provider`** — OpenAI 兼容与 Anthropic 两个流式模型提供方
 - **`internal/agent`** — 运行时：路由、每 (channel, chat, thread) 一个会话、
   同会话串行 turn、运行中收到的消息排队并提示、流式占位消息节流更新、
-  完成后一次性落史并发最终回复
+  完成后一次性落史并发最终回复；slash 命令与群 @ 门控也在这层
+- **`internal/cliagent`** — 无头 CLI 代理运行器：每 turn 起一个进程，claude
+  走 `-p --output-format stream-json --resume`，codex 走 `exec --json`，
+  按 chatmux 锚点记 resume id，跨轮续会话；工具调用作为进度行流回聊天
+- **`internal/cron`** — 5 字段 cron 调度器（分 时 日 月 周），到点向指定
+  会话发合成消息（如「每天 9:30 站会总结」）
+- **`internal/usage`** — 每 turn 一行 JSONL 用量记账（token/字符/时长），落
+  `dataDir/usage.jsonl`
 - **`internal/dedup`** — 文件持久化的 at-least-once 去重（TTL + 容量上限），
   借鉴 botmux 的 message_id 去重（飞书 WS 会按 15s/5min/1h/6h 梯度重推）
 - **`internal/session`** — 会话历史（含话题/线程锚点，借鉴 openclaw 的
@@ -42,6 +50,59 @@ cp chatmux.json.example chatmux.json   # 填入你的通道凭据和模型 key
 
 模型 key 也可以走环境变量：`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`（配置文件里的 `apiKey`/`baseUrl` 优先，可按 agent 覆盖——任何 OpenAI 兼容网关都能接）。
 
+## 两种 agent 形态
+
+**API agent**（默认）：直接调模型接口，chatmux 自己管历史。
+
+```json
+{ "name": "helper", "provider": "openai", "model": "gpt-4o-mini", "routes": [{"channel": "any"}] }
+```
+
+**CLI agent**：像 botmux 一样驱动无头编码 CLI，CLI 自带会话记忆（chatmux 按
+锚点记 resume id，跨轮续跑），工具调用实时流回群里：
+
+```json
+{
+  "name": "dev",
+  "cli": { "type": "claude", "model": "sonnet", "workingDir": "/srv/project" },
+  "routes": [{ "channel": "feishu", "chatId": "oc_xxxx" }]
+}
+```
+
+`type` 支持 `claude` / `codex` / `generic`（generic 需给 `bin`，可选
+`promptArg`/`resumeFlag`）。
+
+## 聊天内命令
+
+任何会话直接发：
+
+| 命令 | 作用 |
+|---|---|
+| `/stop` | 打断当前处理中的任务（CLI 进程会被杀掉） |
+| `/new` | 全新会话（清历史 + 清 CLI resume） |
+| `/status` | 当前会话状态（模式/模型/历史条数） |
+| `/model [名称]` | 查看/切换本会话模型 |
+| `/system [提示词]` | 查看/覆盖 system 提示词 |
+
+群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
+
+## 定时任务
+
+```json
+"cron": [{ "name": "standup", "schedule": "30 9 * * 1-5", "channel": "feishu", "chatId": "oc_xxxx", "text": "总结昨天进展" }]
+```
+
+## 运维
+
+```bash
+chatmux status                      # 通道健康 + 运行时状态
+chatmux stop                        # 优雅停机
+chatmux send -to feishu:oc_xxxx 文本  # 从服务端直发消息
+```
+
+对应 HTTP 端点 `/admin/status` `/admin/stop` `/admin/send`，用
+`http.adminToken` 保护（建议只要监听非环回就设置）。`/healthz` 供探活。
+
 ## 各平台接入要点
 
 | 平台 | 传输 | 前置条件 | 流式编辑 |
@@ -56,15 +117,18 @@ cp chatmux.json.example chatmux.json   # 填入你的通道凭据和模型 key
 ## 安全
 
 - 每个 `channel.options` 支持 `allowUsers` / `allowChats`（空 = 不限制，生产务必配置）
+- 群聊默认 @ 门控；CLI agent 的 `workingDir` 决定它能碰哪些文件
 - 飞书 webhook 模式实现 sha256(timestamp+nonce+encryptKey+body) 验签 + ±1h 时间窗
 - 企业微信回调按官方 AES-256-CBC + SHA1 签名规范，任何不匹配直接 403
 - 会话去重存储与状态文件落在 `dataDir`（默认 `data/`），权限 0600
+- 图片下载：飞书按 image_key 走 im 资源接口、Telegram 走 getFile，落到
+  `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
 
-v0.1 骨架完成：六个通道适配器 + 双 provider + 会话/去重/排队运行时 + 单测。
-未做（欢迎 PR）：CLI 子进程代理（像 botmux 驱动 claude/codex）、卡片交互按钮、
-图片下载管线（当前只透传 URL/file_key）、多账号、指标面板。
+v0.2：六通道 + 双 provider + **CLI agent（claude/codex/generic）** + slash 命令 +
+群 @ 门控 + cron 定时 + 用量记账 + admin CLI/HTTP + 图片下载管线 + 单测。
+未做（欢迎 PR）：卡片交互按钮、语音转写、多账号、指标面板。
 
 ## License
 

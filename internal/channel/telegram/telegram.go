@@ -18,20 +18,21 @@ import (
 )
 
 type Options struct {
-	Token     string `json:"token"`     // bot token from @BotFather
-	APIBase   string `json:"apiBase"`   // default https://api.telegram.org
+	Token      string   `json:"token"`      // bot token from @BotFather
+	APIBase    string   `json:"apiBase"`    // default https://api.telegram.org
 	AllowUsers []string `json:"allowUsers"` // empty = allow all
 }
 
 type Telegram struct {
+	name   string // instance name (defaults to "telegram")
 	opts   Options
 	client *http.Client
 
-	mu     sync.Mutex
-	offset int64
+	mu      sync.Mutex
+	offset  int64
 	healthy bool
 	lastErr error
-	names  map[int64]string // user id → username cache
+	names   map[int64]string // user id → username cache
 }
 
 func New(raw json.RawMessage) (channel.Channel, error) {
@@ -46,13 +47,22 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 		o.APIBase = "https://api.telegram.org"
 	}
 	return &Telegram{
+		name:   "telegram",
 		opts:   o,
 		client: &http.Client{Timeout: 70 * time.Second},
 		names:  map[int64]string{},
 	}, nil
 }
 
-func (t *Telegram) Name() string { return "telegram" }
+func (t *Telegram) Name() string {
+	if t.name != "" {
+		return t.name
+	}
+	return "telegram"
+}
+
+// SetName gives the instance its config name (multi-account support).
+func (t *Telegram) SetName(n string) { t.name = n }
 
 func (t *Telegram) Healthy() bool {
 	t.mu.Lock()
@@ -65,8 +75,8 @@ type tgUpdate struct {
 	Message  *struct {
 		MessageID int64 `json:"message_id"`
 		From      *struct {
-			ID       int64  `json:"id"`
-			Username string `json:"username"`
+			ID        int64  `json:"id"`
+			Username  string `json:"username"`
 			FirstName string `json:"first_name"`
 		} `json:"from"`
 		Chat struct {
@@ -74,10 +84,12 @@ type tgUpdate struct {
 			Type  string `json:"type"` // "private" | "group" | "supergroup"
 			Title string `json:"title"`
 		} `json:"chat"`
-		ReplyToMessage *struct{ MessageID int64 `json:"message_id"` } `json:"reply_to_message"`
-		Text           string `json:"text"`
-		Caption        string `json:"caption"`
-		Entities       []struct {
+		ReplyToMessage *struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"reply_to_message"`
+		Text     string `json:"text"`
+		Caption  string `json:"caption"`
+		Entities []struct {
 			Type   string `json:"type"`
 			Offset int    `json:"offset"`
 			Length int    `json:"length"`
@@ -86,15 +98,18 @@ type tgUpdate struct {
 			FileID string `json:"file_id"`
 		} `json:"photo"`
 		Document *struct {
-			FileID string `json:"file_id"`
+			FileID   string `json:"file_id"`
 			FileName string `json:"file_name"`
+			MimeType string `json:"mime_type"`
 		} `json:"document"`
 	} `json:"message"`
 }
 
 func (t *Telegram) Start(ctx context.Context, out chan<- channel.Message) error {
 	// drop pending updates from before startup
-	var me struct{ OK bool `json:"ok"` }
+	var me struct {
+		OK bool `json:"ok"`
+	}
 	if err := t.call(ctx, "getMe", nil, &me); err != nil {
 		return fmt.Errorf("telegram getMe: %w", err)
 	}
@@ -107,8 +122,8 @@ func (t *Telegram) Start(ctx context.Context, out chan<- channel.Message) error 
 		default:
 		}
 		var ups struct {
-			OK     bool        `json:"ok"`
-			Result []tgUpdate  `json:"result"`
+			OK     bool       `json:"ok"`
+			Result []tgUpdate `json:"result"`
 		}
 		body := map[string]any{"timeout": 50, "allowed_updates": []string{"message"}}
 		t.mu.Lock()
@@ -167,7 +182,7 @@ func (t *Telegram) toMessage(u tgUpdate) (channel.Message, bool) {
 
 	msg := channel.Message{
 		ID:        strconv.FormatInt(m.MessageID, 10),
-		Channel:   "telegram",
+		Channel:   t.name,
 		ChatID:    strconv.FormatInt(m.Chat.ID, 10),
 		ChatType:  chatType,
 		UserID:    strconv.FormatInt(m.From.ID, 10),
@@ -188,13 +203,17 @@ func (t *Telegram) toMessage(u tgUpdate) (channel.Message, bool) {
 	if len(m.Photo) > 0 {
 		msg.Attachments = append(msg.Attachments, channel.Attachment{
 			Type: "image", Name: "photo.jpg",
-			URL: t.fileURL(m.Photo[len(m.Photo)-1].FileID),
+			Key: m.Photo[len(m.Photo)-1].FileID,
 		})
 	}
 	if m.Document != nil {
+		kind := "file"
+		if strings.HasPrefix(m.Document.MimeType, "image/") {
+			kind = "image"
+		}
 		msg.Attachments = append(msg.Attachments, channel.Attachment{
-			Type: "file", Name: m.Document.FileName,
-			URL: t.fileURL(m.Document.FileID),
+			Type: kind, Name: m.Document.FileName,
+			Key: m.Document.FileID,
 		})
 	}
 	return msg, true
@@ -215,9 +234,46 @@ func displayName(f *struct {
 }
 
 func (t *Telegram) fileURL(fileID string) string {
-	// synchronous getFile is skipped for speed: adapters that need bytes
-	// call this; keep the file id encoded in a stable URL for download.
-	return fmt.Sprintf("%s/bot%s/file?file_id=%s", t.opts.APIBase, t.opts.Token, fileID)
+	// unused placeholder kept for compatibility; Download below is the
+	// real two-step fetch (getFile → file/bot<token>/<path>).
+	_ = fileID
+	return ""
+}
+
+// Download implements channel.AttachmentDownloader: getFile resolves the
+// file_path, then the file endpoint serves the bytes.
+func (t *Telegram) Download(ctx context.Context, att channel.Attachment) ([]byte, string, error) {
+	if att.Key == "" {
+		return nil, "", fmt.Errorf("telegram: attachment has no file id")
+	}
+	var out struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			FilePath string `json:"file_path"`
+		} `json:"result"`
+	}
+	if err := t.call(ctx, "getFile", map[string]string{"file_id": att.Key}, &out); err != nil {
+		return nil, "", err
+	}
+	if out.Result.FilePath == "" {
+		return nil, "", fmt.Errorf("telegram: empty file_path for %s", att.Key)
+	}
+	url := fmt.Sprintf("%s/file/bot%s/%s", t.opts.APIBase, t.opts.Token, out.Result.FilePath)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("telegram file download: %s", resp.Status)
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" || mime == "application/octet-stream" {
+		mime = http.DetectContentType(data)
+	}
+	return data, mime, nil
 }
 
 func (t *Telegram) setHealthy(ok bool, err error) {
@@ -228,7 +284,10 @@ func (t *Telegram) setHealthy(ok bool, err error) {
 
 // ---- outbound ----
 
-type Sender struct{ t *Telegram; chatID string }
+type Sender struct {
+	t      *Telegram
+	chatID string
+}
 
 func (t *Telegram) SenderFor(msg channel.Message) (channel.Sender, error) {
 	return &Sender{t: t, chatID: msg.ChatID}, nil
@@ -274,7 +333,9 @@ func (s *Sender) Replace(ctx context.Context, msgID, text string) error {
 		"message_id": mustInt(msgID),
 		"text":       text,
 	}
-	var res struct{ OK bool `json:"ok"` }
+	var res struct {
+		OK bool `json:"ok"`
+	}
 	return s.t.call(ctx, "editMessageText", body, &res)
 }
 
@@ -284,7 +345,9 @@ func (s *Sender) React(ctx context.Context, msgID, emoji string) error {
 		"message_id": mustInt(msgID),
 		"reaction":   []map[string]string{{"type": "emoji", "emoji": emoji}},
 	}
-	var res struct{ OK bool `json:"ok"` }
+	var res struct {
+		OK bool `json:"ok"`
+	}
 	return s.t.call(ctx, "setMessageReaction", body, &res)
 }
 

@@ -15,10 +15,10 @@ const (
 
 // Msg is one turn of conversation history.
 type Msg struct {
-	Role    Role       `json:"role"`
-	Content string     `json:"content"`
-	Name    string     `json:"name,omitempty"` // speaker display name, group chats
-	Images  []string   `json:"images,omitempty"` // http(s) URLs or local paths
+	Role    Role     `json:"role"`
+	Content string   `json:"content"`
+	Name    string   `json:"name,omitempty"`   // speaker display name, group chats
+	Images  []string `json:"images,omitempty"` // http(s) URLs or local paths
 }
 
 // Request is a model call.

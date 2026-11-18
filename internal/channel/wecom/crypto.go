@@ -19,9 +19,9 @@ import (
 // PKCS#7 padded. Signature = SHA1 of sorted(token, timestamp, nonce, msg).
 
 type cbCrypto struct {
-	token      string
-	aesKey     []byte
-	receiveID  string // CorpID for app callbacks
+	token     string
+	aesKey    []byte
+	receiveID string // CorpID for app callbacks
 }
 
 func newCBCrypto(token, encodingAESKey, receiveID string) (*cbCrypto, error) {

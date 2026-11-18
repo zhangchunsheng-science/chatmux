@@ -1,5 +1,8 @@
 {
-  "http": { "listen": "127.0.0.1:8080" },
+  "http": {
+    "listen": "127.0.0.1:8080",
+    "adminToken": "set-a-long-random-string-if-exposed"
+  },
   "dataDir": "data",
   "defaultAgent": "helper",
   "channels": [
@@ -81,6 +84,27 @@
       "routes": [
         { "channel": "telegram", "chatType": "group" }
       ]
+    },
+    {
+      "name": "dev",
+      "cli": {
+        "type": "claude",
+        "model": "sonnet",
+        "workingDir": "/srv/project"
+      },
+      "groupMention": true,
+      "routes": [
+        { "channel": "feishu", "chatId": "oc_xxxx" }
+      ]
+    }
+  ],
+  "cron": [
+    {
+      "name": "standup",
+      "schedule": "30 9 * * 1-5",
+      "channel": "feishu",
+      "chatId": "oc_xxxx",
+      "text": "请总结过去一天的工作进展和今天的计划。"
     }
   ]
 }

@@ -38,10 +38,11 @@ type Options struct {
 }
 
 type WeCom struct {
-	opts    Options
-	crypto  *cbCrypto
-	client  *http.Client
-	seen    *dedup.Store
+	name   string // instance name (defaults to "wecom")
+	opts   Options
+	crypto *cbCrypto
+	client *http.Client
+	seen   *dedup.Store
 
 	mu      sync.Mutex
 	accTok  string
@@ -72,6 +73,7 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 		return nil, err
 	}
 	return &WeCom{
+		name:   "wecom",
 		opts:   o,
 		crypto: c,
 		client: &http.Client{Timeout: 30 * time.Second},
@@ -79,7 +81,15 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 	}, nil
 }
 
-func (w *WeCom) Name() string { return "wecom" }
+func (w *WeCom) Name() string {
+	if w.name != "" {
+		return w.name
+	}
+	return "wecom"
+}
+
+// SetName gives the instance its config name (multi-account support).
+func (w *WeCom) SetName(n string) { w.name = n }
 
 func (w *WeCom) Healthy() bool { return true } // webhook channel: healthy if process is up
 
@@ -89,10 +99,10 @@ func (w *WeCom) Endpoints() map[string]http.Handler {
 }
 
 type cbRequest struct {
-	XMLName   xml.Name `xml:"xml"`
-	ToUserName string  `xml:"ToUserName"`
-	Encrypt   string  `xml:"Encrypt"`
-	AgentID   string  `xml:"AgentID"`
+	XMLName    xml.Name `xml:"xml"`
+	ToUserName string   `xml:"ToUserName"`
+	Encrypt    string   `xml:"Encrypt"`
+	AgentID    string   `xml:"AgentID"`
 }
 
 type cbPlain struct {
@@ -183,7 +193,7 @@ func (w *WeCom) toMessage(p cbPlain) channel.Message {
 	}
 	msg := channel.Message{
 		ID:        p.MsgID,
-		Channel:   "wecom",
+		Channel:   w.name,
 		ChatID:    chatID,
 		ChatType:  chatType,
 		UserID:    p.FromUserName,
@@ -225,8 +235,8 @@ func (w *WeCom) Start(ctx context.Context, out chan<- channel.Message) error {
 // ---- outbound ----
 
 type Sender struct {
-	w       *WeCom
-	chatID  string
+	w        *WeCom
+	chatID   string
 	chatType string
 }
 

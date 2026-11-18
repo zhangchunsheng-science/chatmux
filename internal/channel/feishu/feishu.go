@@ -31,10 +31,10 @@ import (
 type Options struct {
 	AppID     string `json:"appId"`
 	AppSecret string `json:"appSecret"`
-	Brand     string `json:"brand"`     // "feishu" (default) or "lark"
-	Mode      string `json:"mode"`      // "ws" (default) or "webhook"
+	Brand     string `json:"brand"` // "feishu" (default) or "lark"
+	Mode      string `json:"mode"`  // "ws" (default) or "webhook"
 	// webhook mode:
-	WebhookPath       string `json:"webhookPath"`       // default /feishu/events
+	WebhookPath       string `json:"webhookPath"` // default /feishu/events
 	EncryptKey        string `json:"encryptKey"`
 	VerificationToken string `json:"verificationToken"`
 	// admission:
@@ -44,6 +44,7 @@ type Options struct {
 }
 
 type Feishu struct {
+	name   string // instance name (defaults to "feishu")
 	opts   Options
 	api    *api
 	seen   *dedup.Store
@@ -80,6 +81,7 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 		base = "https://open.larksuite.com"
 	}
 	return &Feishu{
+		name:   "feishu",
 		opts:   o,
 		api:    &api{appID: o.AppID, appSecret: o.AppSecret, base: base, client: &http.Client{Timeout: 30 * time.Second}},
 		seen:   dedup.New(filepath.Join(o.DataDir, "feishu-seen.json"), 8*time.Hour, 5000),
@@ -87,7 +89,15 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 	}, nil
 }
 
-func (f *Feishu) Name() string { return "feishu" }
+func (f *Feishu) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "feishu"
+}
+
+// SetName gives the instance its config name (multi-account support).
+func (f *Feishu) SetName(n string) { f.name = n }
 
 func (f *Feishu) Healthy() bool {
 	f.mu.Lock()
@@ -200,7 +210,7 @@ func (f *Feishu) toMessage(e *larkim.P2MessageReceiveV1) (channel.Message, bool)
 
 	msg := channel.Message{
 		ID:          deref(m.MessageId),
-		Channel:     "feishu",
+		Channel:     f.name,
 		ChatID:      chatID,
 		ChatType:    chatType,
 		ThreadID:    thread,
@@ -238,20 +248,20 @@ func parseContent(msgType, content string) (string, []channel.Attachment) {
 			ImageKey string `json:"image_key"`
 		}
 		_ = json.Unmarshal([]byte(content), &c)
-		return "", []channel.Attachment{{Type: "image", Name: c.ImageKey}}
+		return "", []channel.Attachment{{Type: "image", Name: c.ImageKey, Key: c.ImageKey}}
 	case "file":
 		var c struct {
 			FileKey  string `json:"file_key"`
 			FileName string `json:"file_name"`
 		}
 		_ = json.Unmarshal([]byte(content), &c)
-		return "", []channel.Attachment{{Type: "file", Name: c.FileKey}}
+		return "", []channel.Attachment{{Type: "file", Name: c.FileName, Key: c.FileKey}}
 	case "audio":
 		var c struct {
 			FileKey string `json:"file_key"`
 		}
 		_ = json.Unmarshal([]byte(content), &c)
-		return "", []channel.Attachment{{Type: "audio", Name: c.FileKey}}
+		return "", []channel.Attachment{{Type: "audio", Name: c.FileKey, Key: c.FileKey}}
 	}
 	return "", nil
 }
@@ -355,9 +365,9 @@ func (f *Feishu) serveWebhook(rw http.ResponseWriter, r *http.Request) {
 
 	var env struct {
 		Header struct {
-			EventID    string `json:"event_id"`
-			Token      string `json:"token"`
-		 EventType string `json:"event_type"`
+			EventID   string `json:"event_id"`
+			Token     string `json:"token"`
+			EventType string `json:"event_type"`
 		} `json:"header"`
 		Event json.RawMessage `json:"event"`
 	}
@@ -381,14 +391,14 @@ func (f *Feishu) serveWebhook(rw http.ResponseWriter, r *http.Request) {
 			SenderType string `json:"sender_type"`
 		} `json:"sender"`
 		Message struct {
-			MessageID string `json:"message_id"`
-			RootID    string `json:"root_id"`
-			ThreadID  string `json:"thread_id"`
-			ChatID    string `json:"chat_id"`
-			ChatType  string `json:"chat_type"`
+			MessageID   string `json:"message_id"`
+			RootID      string `json:"root_id"`
+			ThreadID    string `json:"thread_id"`
+			ChatID      string `json:"chat_id"`
+			ChatType    string `json:"chat_type"`
 			MessageType string `json:"message_type"`
-			Content   string `json:"content"`
-			Mentions  []struct {
+			Content     string `json:"content"`
+			Mentions    []struct {
 				Key string `json:"key"`
 				ID  string `json:"id"`
 			} `json:"mentions"`
@@ -416,7 +426,7 @@ func (f *Feishu) serveWebhook(rw http.ResponseWriter, r *http.Request) {
 	}
 	msg := channel.Message{
 		ID:          data.Message.MessageID,
-		Channel:     "feishu",
+		Channel:     f.name,
 		ChatID:      data.Message.ChatID,
 		ChatType:    data.Message.ChatType,
 		ThreadID:    thread,
@@ -445,13 +455,29 @@ func (f *Feishu) serveWebhook(rw http.ResponseWriter, r *http.Request) {
 // ---- outbound ----
 
 type Sender struct {
-	f       *Feishu
-	chatID  string
-	thread  string
+	f      *Feishu
+	chatID string
+	thread string
 }
 
 func (f *Feishu) SenderFor(msg channel.Message) (channel.Sender, error) {
 	return &Sender{f: f, chatID: msg.ChatID, thread: msg.ThreadID}, nil
+}
+
+// Download implements channel.AttachmentDownloader: fetches image bytes
+// by image_key via the im resource API (needs im:resource scope).
+func (f *Feishu) Download(ctx context.Context, att channel.Attachment) ([]byte, string, error) {
+	if att.Key == "" {
+		return nil, "", fmt.Errorf("feishu: attachment has no key")
+	}
+	data, mime, err := f.api.download(ctx, "/open-apis/im/v1/images/"+att.Key)
+	if err != nil {
+		return nil, "", err
+	}
+	if mime == "" || mime == "application/octet-stream" {
+		mime = http.DetectContentType(data)
+	}
+	return data, mime, nil
 }
 
 func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions) (string, error) {

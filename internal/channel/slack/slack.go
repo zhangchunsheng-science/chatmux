@@ -24,15 +24,16 @@ import (
 )
 
 type Options struct {
-	BotToken    string `json:"botToken"`    // xoxb-
-	AppToken    string `json:"appToken"`    // xapp-
-	APIBase     string `json:"apiBase"`     // default https://slack.com
-	WSProxy     string `json:"wsProxy"`     // optional wss proxy url
-	DataDir     string `json:"dataDir"`
-	AllowUsers  []string `json:"allowUsers"`
+	BotToken   string   `json:"botToken"` // xoxb-
+	AppToken   string   `json:"appToken"` // xapp-
+	APIBase    string   `json:"apiBase"`  // default https://slack.com
+	WSProxy    string   `json:"wsProxy"`  // optional wss proxy url
+	DataDir    string   `json:"dataDir"`
+	AllowUsers []string `json:"allowUsers"`
 }
 
 type Slack struct {
+	name   string // instance name (defaults to "slack")
 	opts   Options
 	client *http.Client
 	seen   *dedup.Store
@@ -57,13 +58,22 @@ func New(raw json.RawMessage) (channel.Channel, error) {
 		o.DataDir = "data"
 	}
 	return &Slack{
+		name:   "slack",
 		opts:   o,
 		client: &http.Client{Timeout: 30 * time.Second},
 		seen:   dedup.New(strings.TrimSuffix(o.DataDir, "/")+"/slack-seen.json", 8*time.Hour, 5000),
 	}, nil
 }
 
-func (s *Slack) Name() string { return "slack" }
+func (s *Slack) Name() string {
+	if s.name != "" {
+		return s.name
+	}
+	return "slack"
+}
+
+// SetName gives the instance its config name (multi-account support).
+func (s *Slack) SetName(n string) { s.name = n }
 
 func (s *Slack) Healthy() bool {
 	s.mu.Lock()
@@ -80,12 +90,12 @@ func (s *Slack) setHealthy(v bool) {
 // ---- socket mode ----
 
 type smEnvelope struct {
-	Type      string          `json:"type"`
-	EnvelopeID string         `json:"envelope_id"`
-	Payload   json.RawMessage `json:"payload"`
+	Type       string          `json:"type"`
+	EnvelopeID string          `json:"envelope_id"`
+	Payload    json.RawMessage `json:"payload"`
 	// hello/debug/disconnect/_unknown + reconnect
-	Reason     string `json:"reason"`
-	DebugInfo  struct {
+	Reason    string `json:"reason"`
+	DebugInfo struct {
 		Count int `json:"reconnect_count"`
 	} `json:"debug_info"`
 }
@@ -93,9 +103,13 @@ type smEnvelope struct {
 func (s *Slack) Start(ctx context.Context, out chan<- channel.Message) error {
 	if s.botID == "" {
 		var auth struct {
-			OK   bool `json:"ok"`
-			Bot  struct{ ID string `json:"bot_id"` } `json:"bot"`
-			User struct{ ID string `json:"user_id"` } `json:"user"`
+			OK  bool `json:"ok"`
+			Bot struct {
+				ID string `json:"bot_id"`
+			} `json:"bot"`
+			User struct {
+				ID string `json:"user_id"`
+			} `json:"user"`
 		}
 		if err := s.api(ctx, "auth.test", nil, &auth); err == nil && auth.OK {
 			s.botID = auth.User.ID
@@ -183,14 +197,14 @@ func (s *Slack) runSocketMode(ctx context.Context, dialer *websocket.Dialer, out
 func (s *Slack) handleEvent(ctx context.Context, payload json.RawMessage, out chan<- channel.Message) {
 	var ev struct {
 		Event struct {
-			Type    string `json:"type"`
-			Channel string `json:"channel"`
+			Type        string `json:"type"`
+			Channel     string `json:"channel"`
 			ChannelType string `json:"channel_type"`
-			User    string `json:"user"`
-			Text    string `json:"text"`
-			TS      string `json:"ts"`
-			ThreadTS string `json:"thread_ts"`
-			Files   []struct {
+			User        string `json:"user"`
+			Text        string `json:"text"`
+			TS          string `json:"ts"`
+			ThreadTS    string `json:"thread_ts"`
+			Files       []struct {
 				URLPrivate string `json:"url_private"`
 				Name       string `json:"name"`
 				Filetype   string `json:"filetype"`
@@ -225,7 +239,7 @@ func (s *Slack) handleEvent(ctx context.Context, payload json.RawMessage, out ch
 	mentionedMe := strings.Contains(e.Text, "<@"+s.botID)
 	msg := channel.Message{
 		ID:          e.TS,
-		Channel:     "slack",
+		Channel:     s.name,
 		ChatID:      e.Channel,
 		ChatType:    chatType,
 		ThreadID:    e.ThreadTS,
@@ -309,8 +323,8 @@ func (s *Slack) wsURL(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	var res struct {
-		OK  bool   `json:"ok"`
-		URL string `json:"url"`
+		OK    bool   `json:"ok"`
+		URL   string `json:"url"`
 		Error string `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
@@ -325,8 +339,8 @@ func (s *Slack) wsURL(ctx context.Context) (string, error) {
 // ---- outbound ----
 
 type Sender struct {
-	s       *Slack
-	chatID  string
+	s      *Slack
+	chatID string
 }
 
 func (s *Slack) SenderFor(msg channel.Message) (channel.Sender, error) {
@@ -339,8 +353,8 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 		body["thread_ts"] = opts.ReplyTo
 	}
 	var res struct {
-		OK  bool   `json:"ok"`
-		TS  string `json:"ts"`
+		OK    bool   `json:"ok"`
+		TS    string `json:"ts"`
 		Error string `json:"error"`
 	}
 	if err := s.s.api(ctx, "chat.postMessage", body, &res); err != nil {
@@ -352,7 +366,7 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 func (s *Sender) Replace(ctx context.Context, msgID, text string) error {
 	body := map[string]any{"channel": s.chatID, "ts": msgID, "text": text}
 	var res struct {
-		OK  bool   `json:"ok"`
+		OK    bool   `json:"ok"`
 		Error string `json:"error"`
 	}
 	if err := s.s.api(ctx, "chat.update", body, &res); err != nil {
@@ -367,7 +381,7 @@ func (s *Sender) Replace(ctx context.Context, msgID, text string) error {
 func (s *Sender) React(ctx context.Context, msgID, emoji string) error {
 	body := map[string]any{"channel": s.chatID, "timestamp": msgID, "name": emoji}
 	var res struct {
-		OK  bool   `json:"ok"`
+		OK    bool   `json:"ok"`
 		Error string `json:"error"`
 	}
 	if err := s.s.api(ctx, "reactions.add", body, &res); err != nil {
