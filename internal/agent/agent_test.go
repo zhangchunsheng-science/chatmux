@@ -842,3 +842,52 @@ func TestCliTurnAccounting(t *testing.T) {
 		})
 	}
 }
+
+func TestRunOnceAccounting(t *testing.T) {
+	key := session.Key{Channel: "feishu", ChatID: "c1|step1"}
+	cases := []struct {
+		name     string
+		prov     provider.Provider
+		wantErr  bool
+		wantText string
+	}{
+		{"stream error", &errStreamProvider{}, true, ""},
+		{"delta error", &errDeltaProvider{}, true, ""},
+		{"success", &echoProvider{}, false, "prompt-x"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := &config.Config{
+				Agents:       []config.AgentConfig{{Name: "wf", Provider: "openai"}},
+				DefaultAgent: "wf", DataDir: dir,
+			}
+			reg := provider.NewRegistry()
+			reg.Register(tc.prov)
+			rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+			rt.SetUsageLogger(usage.New(dir))
+
+			out, err := rt.runOnce(context.Background(), key, &cfg.Agents[0], tc.wantText)
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				aggs, aerr := usage.Summarize(dir)
+				if aerr == nil && len(aggs) == 1 && aggs[0].Calls == 1 {
+					gotErr := aggs[0].Errors == 1
+					if gotErr != tc.wantErr {
+						t.Fatalf("error flag = %v, want %v (%+v)", gotErr, tc.wantErr, aggs[0])
+					}
+					if err != nil != tc.wantErr {
+						t.Fatalf("runOnce err = %v, wantErr %v", err, tc.wantErr)
+					}
+					if !tc.wantErr && out != tc.wantText {
+						t.Fatalf("out = %q, want %q", out, tc.wantText)
+					}
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			aggs, _ := usage.Summarize(dir)
+			t.Fatalf("call not recorded: %+v", aggs)
+		})
+	}
+}

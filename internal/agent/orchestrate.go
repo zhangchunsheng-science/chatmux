@@ -121,12 +121,14 @@ func (r *Runtime) callAgentText(ctx context.Context, a *config.AgentConfig, prom
 		BaseURL:     a.BaseURL,
 	})
 	if err != nil {
+		r.logCall(a, "orchestrate", a.Model, session.Key{}, start, 0, err)
 		return "", err
 	}
 	var sb strings.Builder
 	var inTok, outTok int
 	for d := range stream {
 		if d.Err != nil {
+			r.logCall(a, "orchestrate", a.Model, session.Key{}, start, sb.Len(), d.Err)
 			return "", d.Err
 		}
 		sb.WriteString(d.Text)
@@ -137,15 +139,20 @@ func (r *Runtime) callAgentText(ctx context.Context, a *config.AgentConfig, prom
 			outTok = d.OutputTokens
 		}
 	}
+	callErr := error(nil)
 	if strings.TrimSpace(sb.String()) == "" {
-		return "", fmt.Errorf("empty reply")
+		callErr = fmt.Errorf("empty reply")
 	}
 	if r.usage != nil {
 		r.usage.Log(usage.Record{
 			Agent: a.Name, Mode: "orchestrate", Provider: providerName(a), Model: a.Model,
 			InputTokens: inTok, OutputTokens: outTok, OutputChars: sb.Len(),
 			DurationMs: time.Since(start).Milliseconds(),
+			Error:      errStr(callErr),
 		})
+	}
+	if callErr != nil {
+		return "", callErr
 	}
 	return sb.String(), nil
 }

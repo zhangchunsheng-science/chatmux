@@ -1253,6 +1253,17 @@ func (r *Runtime) runFlow(ctx context.Context, execKey session.Key, flowName, in
 	return prev, nil
 }
 
+// logCall records one stateless call (workflow step, dynamic dispatch, bg
+// job) in usage; every model/CLI call site funnels here or through runTurn.
+func (r *Runtime) logCall(a *config.AgentConfig, mode, model string, key session.Key, start time.Time, chars int, err error) {
+	r.usage.Log(usage.Record{
+		Agent: a.Name, Mode: mode, Provider: providerName(a), Model: model,
+		Channel: key.Channel, ChatID: key.ChatID,
+		OutputChars: chars, DurationMs: time.Since(start).Milliseconds(),
+		Error: errStr(err),
+	})
+}
+
 // runOnce does one non-streaming model call (or single CLI turn) and
 // returns the full text.
 func (r *Runtime) runOnce(ctx context.Context, execKey session.Key, a *config.AgentConfig, prompt string) (string, error) {
@@ -1264,12 +1275,15 @@ func (r *Runtime) runOnce(ctx context.Context, execKey session.Key, a *config.Ag
 		if a.Model != "" && cfg.Type != "generic" {
 			cfg.Model = a.Model
 		}
+		start := time.Now()
 		events, err := r.cli.Run(ctx, cfg, execKey.String(), prompt)
 		if err != nil {
+			r.logCall(a, "cli:"+cfg.Type, cfg.Model, execKey, start, 0, err)
 			return "", err
 		}
 		var texts []string
 		var result string
+		var runErr error
 		for ev := range events {
 			switch ev.Type {
 			case "text":
@@ -1278,34 +1292,45 @@ func (r *Runtime) runOnce(ctx context.Context, execKey session.Key, a *config.Ag
 				result = ev.Text
 			case "error":
 				if ctx.Err() == nil {
-					return "", ev.Err
+					runErr = ev.Err
 				}
 			}
 		}
-		return firstNonEmpty(result, strings.Join(texts, "\n\n")), nil
+		out := firstNonEmpty(result, strings.Join(texts, "\n\n"))
+		if runErr != nil {
+			r.logCall(a, "cli:"+cfg.Type, cfg.Model, execKey, start, len(out), runErr)
+			return "", runErr
+		}
+		r.logCall(a, "cli:"+cfg.Type, cfg.Model, execKey, start, len(out), nil)
+		return out, nil
 	}
 	prov, ok := r.registry.Get(providerName(a))
 	if !ok {
 		return "", fmt.Errorf("provider %s 未配置", providerName(a))
 	}
+	start := time.Now()
 	stream, err := prov.Stream(ctx, provider.Request{
 		Model: a.Model, System: firstNonEmpty(a.System, defaultSystemPrompt),
 		Messages:  []provider.Msg{{Role: provider.User, Content: prompt}},
 		MaxTokens: 4096, APIKey: a.APIKey, BaseURL: a.BaseURL,
 	})
 	if err != nil {
+		r.logCall(a, "api", a.Model, execKey, start, 0, err)
 		return "", err
 	}
 	var sb strings.Builder
 	for d := range stream {
 		if d.Err != nil {
 			if ctx.Err() != nil {
+				r.logCall(a, "api", a.Model, execKey, start, sb.Len(), ctx.Err())
 				return sb.String(), ctx.Err()
 			}
+			r.logCall(a, "api", a.Model, execKey, start, sb.Len(), d.Err)
 			return sb.String(), d.Err
 		}
 		sb.WriteString(d.Text)
 	}
+	r.logCall(a, "api", a.Model, execKey, start, sb.Len(), nil)
 	return sb.String(), nil
 }
 
