@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -563,4 +564,67 @@ func TestInsightCommand(t *testing.T) {
 	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/insight 0"}, a, s2)
 	// 0 is not a valid day count → falls back to 7 (still data) — just assert no crash
 	_ = s2
+}
+
+func TestFailedCallLogged(t *testing.T) {
+	cases := []struct {
+		name    string
+		prov    provider.Provider
+		wantMsg string
+	}{
+		// Stream() itself rejects the request (bad key, network): model.fail path
+		{"stream error", &errStreamProvider{}, "模型调用失败"},
+		// Stream opens but a delta carries Err: model.err path
+		{"delta error", &errDeltaProvider{}, "模型出错"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := &config.Config{
+				Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+				DefaultAgent: "default",
+				DataDir:      dir,
+			}
+			reg := provider.NewRegistry()
+			reg.Register(tc.prov)
+			rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+			rt.SetUsageLogger(usage.New(dir))
+			s := &fakeSender{}
+			rt.chans["feishu"] = &stubChannel{sender: s}
+
+			rt.Handle(context.Background(), channel.Message{
+				Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "你好",
+			})
+			waitContains(t, s, tc.wantMsg)
+			// the failed attempt must appear in usage with error set
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				if aggs, err := usage.Summarize(dir); err == nil && len(aggs) == 1 &&
+					aggs[0].Calls == 1 && aggs[0].Errors == 1 {
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			t.Fatal("failed call was not recorded in usage")
+		})
+	}
+}
+
+type errStreamProvider struct{}
+
+func (e *errStreamProvider) Name() string { return "openai" }
+func (e *errStreamProvider) Stream(_ context.Context, _ provider.Request) (<-chan provider.Delta, error) {
+	return nil, fmt.Errorf("401 unauthorized")
+}
+
+type errDeltaProvider struct{}
+
+func (e *errDeltaProvider) Name() string { return "openai" }
+func (e *errDeltaProvider) Stream(_ context.Context, _ provider.Request) (<-chan provider.Delta, error) {
+	ch := make(chan provider.Delta, 1)
+	go func() {
+		ch <- provider.Delta{Err: fmt.Errorf("401 unauthorized")}
+		close(ch)
+	}()
+	return ch, nil
 }

@@ -707,6 +707,14 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	stream, err := prov.Stream(ctx, req)
 	if err != nil {
 		_, _ = t.sender.Send(ctx, r.say("model.fail", err.Error()), channel.SendOptions{Final: true})
+		// failed calls are usage too: /insight and the dashboard must
+		// see attempts that never produced a reply
+		r.usage.Log(usage.Record{
+			Agent: t.agent.Name, Mode: "api", Provider: providerName(t.agent), Model: model,
+			Channel: msg.Channel, ChatID: msg.ChatID,
+			DurationMs: time.Since(start).Milliseconds(),
+			Error:      err.Error(),
+		})
 		return
 	}
 

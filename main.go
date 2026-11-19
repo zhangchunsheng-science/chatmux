@@ -790,6 +790,13 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 				}
 				fmt.Fprintf(&b, "chatmux_usage_calls_total{agent=%q} %d\n", a.Agent, a.Calls)
 			}
+			b.WriteString("# HELP chatmux_usage_errors_total Failed calls per agent.\n# TYPE chatmux_usage_errors_total counter\n")
+			for _, a := range aggs {
+				if a.Agent == "feedback" {
+					continue
+				}
+				fmt.Fprintf(&b, "chatmux_usage_errors_total{agent=%q} %d\n", a.Agent, a.Errors)
+			}
 			b.WriteString("# HELP chatmux_usage_input_tokens_total Input tokens per agent.\n# TYPE chatmux_usage_input_tokens_total counter\n")
 			for _, a := range aggs {
 				if a.Agent == "feedback" {
@@ -1113,7 +1120,7 @@ td, th { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); pa
 <h2>会话板</h2><table id="sessions"><tr><td colspan="5" class="muted">加载中…</td></tr></table>
 <h2>需要你回答</h2><table id="asks"><tr><td class="muted">无</td></tr></table>
 <h2>后台任务</h2><table id="jobs"><tr><td class="muted">无</td></tr></table>
-<h2>用量</h2><table id="usage"><tr><td colspan="6" class="muted">加载中…</td></tr></table>
+<h2>用量</h2><table id="usage"><tr><td colspan="7" class="muted">加载中…</td></tr></table>
 <h2>会话终端</h2>
 <div id="chatlog" style="border:1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius:.5rem; padding:.6rem; height:14rem; overflow-y:auto; font-size:.9rem; margin-top:.5rem; white-space:pre-wrap;"></div>
 <p style="display:flex; gap:.5rem; margin-top:.5rem;">
@@ -1166,10 +1173,10 @@ async function refresh(){
   } catch(e){ $("channels").innerHTML = "<tr><td class='bad'>"+esc(e.message)+"（检查 token）</td></tr>"; }
   try {
     const us = await get("/admin/usage");
-    let u = "<tr><th>Agent</th><th>调用</th><th>入tokens</th><th>出tokens</th><th>👍</th><th>👎</th></tr>";
-    (us||[]).forEach(a=>{ u += "<tr><td>"+esc(a.agent)+"</td><td>"+a.calls+"</td><td>"+a.inputTokens+"</td><td>"+a.outputTokens+"</td><td>"+a.feedbackUp+"</td><td>"+a.feedbackDown+"</td></tr>"; });
-    $("usage").innerHTML = (us||[]).length ? u : "<tr><td colspan='6' class='muted'>暂无数据</td></tr>";
-  } catch(e){ $("usage").innerHTML = "<tr><td colspan='6' class='muted'>"+esc(e.message)+"</td></tr>"; }
+    let u = "<tr><th>Agent</th><th>调用</th><th>失败</th><th>入tokens</th><th>出tokens</th><th>👍</th><th>👎</th></tr>";
+    (us||[]).forEach(a=>{ u += "<tr><td>"+esc(a.agent)+"</td><td>"+a.calls+"</td><td>"+(a.errors||0)+"</td><td>"+a.inputTokens+"</td><td>"+a.outputTokens+"</td><td>"+a.feedbackUp+"</td><td>"+a.feedbackDown+"</td></tr>"; });
+    $("usage").innerHTML = (us||[]).length ? u : "<tr><td colspan='7' class='muted'>暂无数据</td></tr>";
+  } catch(e){ $("usage").innerHTML = "<tr><td colspan='7' class='muted'>"+esc(e.message)+"</td></tr>"; }
   $("ts").textContent = "更新于 " + new Date().toLocaleTimeString();
 }
 refresh();

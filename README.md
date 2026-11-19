@@ -361,6 +361,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.2（对齐循环第 23 轮）：失败调用记账补全——第 22 轮只覆盖了"流已建立
+后出错"（model.err）一条路径，"Stream 直接返回错误"（model.fail，如密钥无效
+的 401）仍漏记；两路径现已都落账，并有双路径单测覆盖。看板用量表加"失败"
+列，/metrics 新增 chatmux_usage_errors_total。
+
 v0.6.1（对齐循环第 22 轮）：失败调用记账——API 流出错（如 401）此前在
 usage 落账前 return，/insight 与看板会漏掉失败；现在失败也记（Record.Error，
 Agg.Errors 计数，/insight 行显示"N 失败"）。CLI 路径失败本就落账。
