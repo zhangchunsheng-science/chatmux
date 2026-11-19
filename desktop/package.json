@@ -1,0 +1,22 @@
+{
+  "name": "chatmux-desktop",
+  "version": "0.5.7",
+  "description": "chatmux 桌面端——内嵌看板/会话终端 + 新消息系统通知",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "science.chatmux.desktop",
+    "productName": "chatmux",
+    "files": ["main.js", "preload.js", "icon.png"],
+    "mac": { "category": "public.app-category.productivity", "target": ["dmg", "zip"] },
+    "linux": { "target": ["AppImage"] },
+    "win": { "target": ["nsis"] }
+  }
+}

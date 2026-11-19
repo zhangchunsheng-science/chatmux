@@ -253,6 +253,23 @@ LCS 行 diff）注入 `{{diff}}`，其余占位符 `{{name}}` `{{path}}`。
 **需要你回答**（ask 待答问题及挂起时间）两张表，以及**会话终端**——直接在
 网页里和网关对话（web 通道，命令、动态派发、ask 全部可用，回复流式更新）。
 
+## 桌面端（Electron 壳）
+
+`desktop/` 目录是一个极薄的 Electron 壳：加载网关看板 + 会话终端，
+轮询 `/admin/chat` 把新的 bot 回复弹成系统通知（macOS 带 Dock 角标，
+点击通知回到窗口），托盘菜单显示/退出，单实例。所有逻辑仍在 Go
+二进制里，壳只负责窗口与通知。
+
+```bash
+cd desktop
+npm install
+CHATMUX_URL=http://127.0.0.1:8080 CHATMUX_TOKEN=<adminToken> npm start
+npm run dist   # 打包 dmg / AppImage / nsis（需真实桌面环境）
+```
+
+注：壳已过语法校验与 JSON 校验，但未在无头环境跑过 GUI——打包与托盘
+图标（`desktop/icon.png`）请在桌面机上验证。
+
 ## 反馈按钮
 
 最终回复在飞书（卡片按钮）、Telegram（inline keyboard）、Discord
@@ -327,6 +344,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.7（对齐循环第 17 轮）：话题群进阶盘点收口（飞书/Slack/Discord 线程
+锚点与落回均已就位，v0.5.6 补齐 Telegram 论坛话题，套件对齐完成）+
+Electron 桌面端壳（desktop/：看板窗口 + 系统通知 + Dock 角标 + 托盘 +
+单实例；语法/JSON 已校验，GUI 未在无头环境验证）。
 
 v0.5.6（对齐循环第 16 轮）：Telegram 话题群——论坛超群 message_thread_id
 作为话题会话键（优先于回复派生的 ThreadID），回复/文件自动带回

@@ -2,4 +2,4 @@
 package version
 
 // Version is bumped per release; release.yml publishes matching tags.
-const Version = "0.5.6"
+const Version = "0.5.7"
