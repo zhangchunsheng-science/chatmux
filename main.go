@@ -52,6 +52,23 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/version"
 )
 
+// Channel restart supervision: a crashing channel (e.g. bad credentials
+// rejected at handshake) is retried with exponential backoff instead of a
+// fixed 5s loop that hammers the upstream API and floods the log.
+const (
+	minChannelBackoff = 5 * time.Second
+	maxChannelBackoff = 5 * time.Minute
+	healthyChannelRun = 10 * time.Minute // a run at least this long resets the backoff
+)
+
+func nextBackoff(cur time.Duration) time.Duration {
+	next := cur * 2
+	if next > maxChannelBackoff {
+		return maxChannelBackoff
+	}
+	return next
+}
+
 func main() {
 	cfgPath := flag.String("config", "chatmux.json", "path to chatmux.json")
 	flag.Parse()
@@ -586,14 +603,26 @@ func runServer(cfgPath string) int {
 	for _, ch := range chans {
 		c := ch
 		go func() {
+			backoff := minChannelBackoff
 			for {
-				if err := c.Start(ctx, inbound); err != nil {
-					log.Printf("channel %s exited: %v — restarting in 5s", c.Name(), err)
+				started := time.Now()
+				err := c.Start(ctx, inbound)
+				ran := time.Since(started)
+				if err == nil || ran >= healthyChannelRun {
+					// clean stop, or it ran long enough to count as healthy
+					backoff = minChannelBackoff
+				}
+				if err != nil {
+					log.Printf("channel %s exited after %s: %v — restarting in %s",
+						c.Name(), ran.Round(time.Second), err, backoff)
 				}
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(5 * time.Second):
+				case <-time.After(backoff):
+				}
+				if err != nil {
+					backoff = nextBackoff(backoff)
 				}
 			}
 		}()

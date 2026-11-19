@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadSkills(t *testing.T) {
@@ -48,5 +49,21 @@ func TestStripFrontmatterNoBlock(t *testing.T) {
 	body, desc = stripFrontmatter("---\nno closing fence")
 	if body != "---\nno closing fence" || desc != "" {
 		t.Fatalf("unclosed frontmatter should pass through: %q", body)
+	}
+}
+
+func TestNextBackoff(t *testing.T) {
+	step := minChannelBackoff
+	want := []time.Duration{10 * time.Second, 20 * time.Second, 40 * time.Second,
+		80 * time.Second, 160 * time.Second, maxChannelBackoff, maxChannelBackoff}
+	for _, w := range want {
+		step = nextBackoff(step)
+		if step != w {
+			t.Fatalf("backoff = %s, want %s", step, w)
+		}
+	}
+	// already at cap stays at cap
+	if got := nextBackoff(maxChannelBackoff); got != maxChannelBackoff {
+		t.Fatalf("cap not held: %s", got)
 	}
 }
