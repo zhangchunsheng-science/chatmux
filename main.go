@@ -37,6 +37,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/channel/feishu"
 	"github.com/zhangchunsheng-science/chatmux/internal/channel/slack"
 	"github.com/zhangchunsheng-science/chatmux/internal/channel/telegram"
+	"github.com/zhangchunsheng-science/chatmux/internal/channel/web"
 	"github.com/zhangchunsheng-science/chatmux/internal/channel/wecom"
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
 	"github.com/zhangchunsheng-science/chatmux/internal/cron"
@@ -301,6 +302,9 @@ func runServer(cfgPath string) int {
 			}
 		}
 	}
+	// web console channel: always on, powers the dashboard chat panel
+	webCh := web.New("web")
+	chans[webCh.Name()] = webCh
 
 	// ---- runtime ----
 	b := bus.New()
@@ -396,6 +400,7 @@ func runServer(cfgPath string) int {
 	started := time.Now()
 	mountAdmin(&mux, cfg, rt, chans, stop, started)
 	mountAsk(&mux, cfg, chans, askBroker)
+	mountWebChat(&mux, cfg, webCh)
 
 	// ---- dashboard ----
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -796,6 +801,59 @@ func mountAsk(mux *http.ServeMux, cfg *config.Config, chans map[string]channel.C
 
 func boolPtr(b bool) *bool { return &b }
 
+// mountWebChat serves the dashboard chat console: POST a line in,
+// GET the log (long-poll friendly cursor via ?since=).
+func mountWebChat(mux *http.ServeMux, cfg *config.Config, wc *web.Web) {
+	guard := func(r *http.Request) bool {
+		if cfg.HTTP.AdminToken == "" {
+			return true
+		}
+		return r.Header.Get("X-Admin-Token") == cfg.HTTP.AdminToken ||
+			r.URL.Query().Get("token") == cfg.HTTP.AdminToken
+	}
+	mux.HandleFunc("/admin/chat", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(r) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("unauthorized"))
+			return
+		}
+		switch r.Method {
+		case http.MethodPost:
+			var req struct {
+				Text string `json:"text"`
+				User string `json:"user,omitempty"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("bad json: " + err.Error()))
+				return
+			}
+			if strings.TrimSpace(req.Text) == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("text is required"))
+				return
+			}
+			user := req.User
+			if user == "" {
+				user = "console"
+			}
+			wc.Inject("console", "web:"+user, user, strings.TrimSpace(req.Text))
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
+		case http.MethodGet:
+			since := 0
+			if n, err := strconv.Atoi(r.URL.Query().Get("since")); err == nil && n >= 0 {
+				since = n
+			}
+			entries, cursor := wc.Log(since)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries, "cursor": cursor})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+}
+
 // loadSkills reads *.md prompts from dir into name→body map.
 func loadSkills(dir string) map[string]string {
 	if dir == "" {
@@ -850,6 +908,12 @@ td, th { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); pa
 <h2>需要你回答</h2><table id="asks"><tr><td class="muted">无</td></tr></table>
 <h2>后台任务</h2><table id="jobs"><tr><td class="muted">无</td></tr></table>
 <h2>用量</h2><table id="usage"><tr><td colspan="6" class="muted">加载中…</td></tr></table>
+<h2>会话终端</h2>
+<div id="chatlog" style="border:1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius:.5rem; padding:.6rem; height:14rem; overflow-y:auto; font-size:.9rem; margin-top:.5rem; white-space:pre-wrap;"></div>
+<p style="display:flex; gap:.5rem; margin-top:.5rem;">
+<input id="chatin" placeholder="对网关说话（回车发送）" style="flex:1; padding:.4rem;" onkeydown="if(event.key==='Enter')sendChat()">
+<button onclick="sendChat()">发送</button>
+</p>
 <script>
 const $ = id => document.getElementById(id);
 let token = localStorage.getItem("chatmuxAdminToken") || "";
@@ -904,6 +968,38 @@ async function refresh(){
 }
 refresh();
 setInterval(refresh, 5000);
+let chatCursor = 0;
+function renderChat(entries){
+  const log = $("chatlog");
+  entries.forEach(e=>{
+    const line = document.createElement("div");
+    line.style.marginBottom = ".35rem";
+    const who = e.from==="you" ? "🧑 你" : (e.from==="bot" ? "🤖" : "· "+e.from);
+    line.textContent = who+"： "+e.text;
+    if(e.from!=="you") line.style.opacity = "0.9";
+    log.appendChild(line);
+  });
+  if(entries.length) log.scrollTop = log.scrollHeight;
+}
+async function pollChat(){
+  try {
+    const r = await get("/admin/chat?since="+chatCursor);
+    chatCursor = r.cursor;
+    renderChat(r.entries||[]);
+  } catch(e){}
+}
+async function sendChat(){
+  const inp = $("chatin");
+  const text = inp.value.trim();
+  if(!text) return;
+  inp.value = "";
+  const h = token ? {"X-Admin-Token": token, "Content-Type":"application/json"} : {"Content-Type":"application/json"};
+  const r = await fetch("/admin/chat", {method:"POST", headers:h, body:JSON.stringify({text})});
+  if(!r.ok){ renderChat([{from:"system", text:"发送失败 "+r.status}]); return; }
+  pollChat();
+}
+pollChat();
+setInterval(pollChat, 2000);
 </script>
 </body>
 </html>

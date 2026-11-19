@@ -196,7 +196,8 @@ Telegram 音频文件均支持。
 浏览器打开 `http://127.0.0.1:8080/`：通道健康、运行时与会话指标、后台任务
 列表、按 agent 的用量与 👍/👎 反馈统计，5 秒自动刷新（adminToken 输入一次
 存本地）。看板含**会话板**（每会话锚点/名称/agent/消息数/忙闲）与
-**需要你回答**（ask 待答问题及挂起时间）两张表。
+**需要你回答**（ask 待答问题及挂起时间）两张表，以及**会话终端**——直接在
+网页里和网关对话（web 通道，命令、动态派发、ask 全部可用，回复流式更新）。
 
 ## 反馈按钮
 
@@ -272,6 +273,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.4.6（对齐循环第 6 轮）：网页会话终端——看板内置聊天面板（web 通道：
+POST /admin/chat 进、GET /admin/chat?since= 增量轮询出、Replace 原地更新
+流式回复）；首版 GitHub Release v0.4.5 已由 tag 流水线发布，chatmux update
+实测可用。
 
 v0.4.5（对齐循环第 5 轮）：CLI 适配器扩展（qwen / opencode / aider 预设，
 argv 提示词 + 纯文本输出）+ 自更新（`chatmux version` / `chatmux update`，
