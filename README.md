@@ -362,6 +362,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.7（对齐循环第 28 轮）：turn 级运行日志——daemon.log 此前只有频道事件，
+模型轮次完全不可见；现在每轮（成功/两种失败）各记一行
+`turn status= agent= model= chat= dur_ms= in_tok= out_tok= out_chars= err=`，
+运维不开看板也能跟流量。TestTurnLogged 捕获日志断言。
+
 v0.6.6（对齐循环第 27 轮）：会话历史字符预算——此前只按条数（40 条）截断，
 贴超长文档时几轮就能撑爆模型上下文；现在回放历史前先做 8 万字符预算裁剪
 （从最旧对话对开始丢，永远保留最近一对），TestTrimToBudget 覆盖三态。

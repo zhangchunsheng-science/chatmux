@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -722,4 +725,50 @@ func TestTrimToBudget(t *testing.T) {
 	if got := trimToBudget(big, 80_000); len(got) != 2 {
 		t.Fatalf("must always keep one exchange, got %d", len(got))
 	}
+}
+
+// syncedBuffer makes bytes.Buffer safe to read while the logger writes.
+type syncedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestTurnLogged(t *testing.T) {
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent: "default",
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&echoProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+
+	lb := &syncedBuffer{}
+	log.SetOutput(lb)
+	defer log.SetOutput(os.Stderr)
+
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "ping"})
+	waitContains(t, s, "ping")
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if out := lb.String(); strings.Contains(out, "turn status=ok agent=default") &&
+			strings.Contains(out, "chat=feishu/c1") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("turn log line missing: %q", lb.String())
 }

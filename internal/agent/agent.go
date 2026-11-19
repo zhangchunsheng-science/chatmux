@@ -8,6 +8,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -720,6 +721,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 			DurationMs: time.Since(start).Milliseconds(),
 			Error:      err.Error(),
 		})
+		logTurn(t.agent, model, msg, start, 0, 0, 0, err.Error())
 		return
 	}
 
@@ -748,6 +750,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 				OutputChars: len(sb.String()), DurationMs: time.Since(start).Milliseconds(),
 				Error: d.Err.Error(),
 			})
+			logTurn(t.agent, model, msg, start, inTok, outTok, len(sb.String()), d.Err.Error())
 			return
 		}
 		sb.WriteString(d.Text)
@@ -781,6 +784,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 		InputTokens: inTok, OutputTokens: outTok, OutputChars: len(out),
 		DurationMs: time.Since(start).Milliseconds(),
 	})
+	logTurn(t.agent, model, msg, start, inTok, outTok, len(out), "")
 	opts := channel.SendOptions{Final: true, ReplyTo: msg.ID, MentionUserIDs: []string{msg.UserID}}
 	if placeholderID != "" {
 		if err := t.sender.Replace(ctx, placeholderID, out); err == nil {
@@ -794,6 +798,18 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 		_ = t.sender.React(ctx, msg.ID, "white_check_mark")
 	}
 	r.finish(key, userMsg, out)
+}
+
+// logTurn emits one daemon-log line per model turn so operators can follow
+// traffic in daemon.log without the dashboard. Mirrors the usage fields.
+func logTurn(a *config.AgentConfig, model string, msg channel.Message, start time.Time, inTok, outTok, chars int, errStr string) {
+	status := "ok"
+	if errStr != "" {
+		status = "err"
+	}
+	log.Printf("turn status=%s agent=%s model=%s chat=%s/%s dur_ms=%d in_tok=%d out_tok=%d out_chars=%d err=%q",
+		status, a.Name, model, msg.Channel, msg.ChatID,
+		time.Since(start).Milliseconds(), inTok, outTok, chars, errStr)
 }
 
 // buildPrompt folds reply-quote context into the user prompt.
