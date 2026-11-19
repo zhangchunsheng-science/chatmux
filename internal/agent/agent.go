@@ -127,6 +127,12 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 		return
 	}
 	agentCfg := r.agentFor(msg)
+	// per-session agent override (/agent) beats route-based selection
+	if name := r.sessions.Get(key).Agent; name != "" {
+		if a := r.agentByName(name); a != nil {
+			agentCfg = a
+		}
+	}
 	if agentCfg == nil {
 		r.mu.Unlock()
 		return
@@ -520,6 +526,42 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			break
 		}
 		reply(r.say("form.sent", fc.Name))
+	case "/agents":
+		if len(r.cfg.Agents) == 0 {
+			reply(r.say("agents.none"))
+			break
+		}
+		cur := r.sessions.Get(key).Agent
+		lines := []string{r.say("agents.header")}
+		for _, ag := range r.cfg.Agents {
+			if ag.Enabled != nil && !*ag.Enabled {
+				continue
+			}
+			mark := " "
+			if ag.Name == firstNonEmpty(cur, r.cfg.DefaultAgent) {
+				mark = "●"
+			}
+			lines = append(lines, r.say("agents.line", mark, ag.Name, agentSummary(&ag)))
+		}
+		reply(strings.Join(lines, "\n"))
+	case "/agent":
+		if arg == "" {
+			reply(r.say("agent.usage"))
+			break
+		}
+		if arg == "auto" || arg == "default" { // back to route-based
+			r.sessions.Set(key, func(s *session.Session) { s.Agent = "" })
+			r.persistSessions()
+			reply(r.say("agent.auto"))
+			break
+		}
+		if r.agentByName(arg) == nil {
+			reply(r.say("agent.none", arg))
+			break
+		}
+		r.sessions.Set(key, func(s *session.Session) { s.Agent = arg })
+		r.persistSessions()
+		reply(r.say("agent.set", arg))
 	case "/help":
 		reply(r.say("help"))
 	default:
@@ -527,6 +569,17 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		return false
 	}
 	return true
+}
+
+// agentSummary describes an agent for /agents in one short phrase.
+func agentSummary(a *config.AgentConfig) string {
+	if a.Cli != nil {
+		return "cli:" + a.Cli.Type
+	}
+	if a.Model != "" {
+		return firstNonEmpty(a.Provider, "openai") + "/" + a.Model
+	}
+	return firstNonEmpty(a.Provider, "openai")
 }
 
 func flowTag(j *bgJob) string {

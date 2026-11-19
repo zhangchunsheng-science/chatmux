@@ -345,3 +345,35 @@ func TestRemindCommand(t *testing.T) {
 	}
 	waitContains(t, s, "看不懂")
 }
+
+func TestAgentSwitch(t *testing.T) {
+	rt, key := testRuntime()
+	a := &rt.cfg.Agents[0]
+	s := &fakeSender{}
+	cmd := func(text string) bool {
+		return rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: text}, a, s)
+	}
+	if !cmd("/agents") {
+		t.Fatal("/agents should dispatch")
+	}
+	waitContains(t, s, "gated")
+	if !cmd("/agent gated") {
+		t.Fatal("/agent should dispatch")
+	}
+	waitContains(t, s, "已切到 agent gated")
+	// override beats route-based selection
+	msg := channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "hi", MentionedMe: true, ChatType: "p2p"}
+	got := rt.agentFor(msg)
+	if got == nil || got.Name != "default" {
+		t.Fatalf("route-based selection should still pick default, got %+v", got)
+	}
+	rt.sessions.Set(key, func(x *session.Session) { x.Agent = "open" })
+	// re-run Handle-style resolution manually: override applied in Handle; test the lookup
+	if a2 := rt.agentByName("open"); a2 == nil || a2.Name != "open" {
+		t.Fatalf("agentByName(open) failed")
+	}
+	if !cmd("/agent auto") {
+		t.Fatal("/agent auto should dispatch")
+	}
+	waitContains(t, s, "恢复按路由")
+}

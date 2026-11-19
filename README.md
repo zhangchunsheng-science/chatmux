@@ -91,6 +91,7 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/remind <时间> <事由>` | 一次性提醒：+30m / +1h30m / 15:30 / 2026-11-20 15:30 |
 | `/status` | 当前会话状态（模式/模型/历史/后台任务数） |
 | `/model [名称]` | 查看/切换本会话模型 |
+| `/agents` · `/agent <名>` | 查看/切换本会话 agent（handoff；`/agent auto` 恢复路由） |
 | `/system [提示词]` | 查看/覆盖 system 提示词 |
 | `/skills` · `/skill <名> <指令>` | 列出 / 使用技能 |
 | `/flows` · `/flow <名> <输入>` | 列出 / 后台跑多步工作流 |
@@ -223,7 +224,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 v0.4.1（对照 botmux 盘点后的补差轮）：会话命名 /name、历史查看 /history、
 上下文回退 /rewind、重试 /retry、一次性提醒 /remind（相对/绝对时间）、
 发文件到聊天（feishu/TG/Discord/Slack，图片内联，`/admin/send file` 与
-`chatmux send --file`）。
+`chatmux send --file`）、agent 切换 /agents · /agent（会话级 handoff，
+优先于路由，持久化）。
 
 v0.4：多平台 👍/👎 按钮（飞书/TG/Discord/Slack）+ 飞书卡片表单
 （forms[] + /form）+ CLI 沙箱（docker 隔离）+ 会话持久化（重启不丢）+ i18n

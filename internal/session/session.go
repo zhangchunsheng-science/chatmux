@@ -41,6 +41,10 @@ type Session struct {
 	// Title names this conversation for /status and the dashboard
 	// (set via /name; chatmux's counterpart to session rename).
 	Title string
+
+	// Agent overrides route-based agent selection for this chat
+	// (set via /agent; botmux handoff's counterpart).
+	Agent string
 }
 
 // maxHistory bounds stored turns per chat (user+assistant pairs).
@@ -113,6 +117,7 @@ func (s *Store) Reset(k Key) {
 	sess.System = ""
 	sess.Model = ""
 	sess.Title = ""
+	sess.Agent = ""
 }
 
 // Rewind drops the last n exchanges (2n messages) from a chat's

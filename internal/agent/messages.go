@@ -35,6 +35,13 @@ var zh = dict{
 	"remind.bad":       "看不懂这个时间：%s（支持 +30m / +1h30m / 15:30 / 2026-11-20 15:30）",
 	"remind.set":       "⏰ 已设提醒：%s（%s 后）",
 	"remind.fire":      "⏰ 提醒（%s 前设置）：%s",
+	"agents.none":      "没有配置任何 agent。",
+	"agents.header":    "可用 agent（/agent <名> 切换，/agent auto 恢复路由）",
+	"agents.line":      "%s %s — %s",
+	"agent.usage":      "用法: /agent <名> 切换本会话的 agent；/agent auto 恢复按路由自动选择",
+	"agent.none":       "没有 agent %s（/agents 查看）。",
+	"agent.set":        "本会话已切到 agent %s（历史保留，下一条消息生效）。",
+	"agent.auto":       "已恢复按路由自动选择 agent。",
 	"status.fmt":       "chatmux %s · 会话 %s · 模式 %s · 模型 %s · 历史 %d 条 · 后台任务 %d 个",
 	"status.busy":      "处理中",
 	"status.idle":      "空闲",
@@ -84,6 +91,7 @@ var zh = dict{
 		"/remind <时间> <事由> — 一次性提醒（+30m / 15:30 / 2026-11-20 15:30）\n" +
 		"/status — 查看当前会话状态\n" +
 		"/model [名称] — 查看/切换模型\n" +
+		"/agents · /agent <名> — 查看/切换本会话的 agent（handoff）\n" +
 		"/system [提示词] — 查看/覆盖 system 提示词\n" +
 		"/skills · /skill <名> <指令> — 使用技能\n" +
 		"/flows · /flow <名> <输入> — 跑多步工作流\n" +
@@ -119,6 +127,13 @@ var en = dict{
 	"remind.bad":       "Can't parse that time: %s (try +30m / +1h30m / 15:30 / 2026-11-20 15:30)",
 	"remind.set":       "⏰ Reminder set: %s (in %s)",
 	"remind.fire":      "⏰ Reminder (set %s ago): %s",
+	"agents.none":      "No agents configured.",
+	"agents.header":    "Agents (/agent <name> to switch, /agent auto to restore routing)",
+	"agents.line":      "%s %s — %s",
+	"agent.usage":      "Usage: /agent <name> switches this session's agent; /agent auto restores routing",
+	"agent.none":       "No agent %s (see /agents).",
+	"agent.set":        "Session switched to agent %s (history kept, effective next message).",
+	"agent.auto":       "Back to route-based agent selection.",
 	"status.fmt":       "chatmux %s · session %s · mode %s · model %s · history %d · bg jobs %d",
 	"status.busy":      "busy",
 	"status.idle":      "idle",
@@ -168,6 +183,7 @@ var en = dict{
 		"/remind <time> <note> — one-shot reminder (+30m / 15:30 / 2026-11-20 15:30)\n" +
 		"/status — session status\n" +
 		"/model [name] — show/switch model\n" +
+		"/agents · /agent <name> — show/switch this session's agent (handoff)\n" +
 		"/system [prompt] — show/override system prompt\n" +
 		"/skills · /skill <name> <instruction> — skills\n" +
 		"/flows · /flow <name> <input> — multi-step workflows\n" +
