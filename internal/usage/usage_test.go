@@ -12,8 +12,8 @@ func TestSummarize(t *testing.T) {
 	l.Log(Record{Agent: "a", Mode: "api", InputTokens: 10, OutputTokens: 20, OutputChars: 100})
 	l.Log(Record{Agent: "a", Mode: "cli:claude", OutputChars: 50})
 	l.Log(Record{Agent: "b", Mode: "api", InputTokens: 1, OutputTokens: 2})
-	l.Log(Record{Agent: "feishu:om1", Mode: "feedback:up", Channel: "feishu"})
-	l.Log(Record{Agent: "feishu:om1", Mode: "feedback:down", Channel: "feishu"})
+	l.Log(Record{Agent: "feedback", Mode: "feedback:up", Channel: "feishu"})
+	l.Log(Record{Agent: "feedback", Mode: "feedback:down", Channel: "feishu"})
 	l.Close()
 
 	aggs, err := Summarize(dir)
@@ -28,7 +28,7 @@ func TestSummarize(t *testing.T) {
 	if a.Calls != 2 || a.InputTokens != 10 || a.OutputTokens != 20 || a.OutputChars != 150 {
 		t.Errorf("agent a agg wrong: %+v", a)
 	}
-	fb := byName["feishu"]
+	fb := byName["feedback"]
 	if fb.FeedbackUp != 1 || fb.FeedbackDown != 1 || fb.Calls != 0 {
 		t.Errorf("feedback agg wrong: %+v", fb)
 	}

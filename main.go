@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -58,6 +59,20 @@ func runClient(args []string, cfgPath string) int {
 		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send)\n", cmd)
 		return 2
 	}
+	// accept -config after the subcommand too: chatmux status -config x.json
+	rest := args[1:]
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == "-config" && i+1 < len(rest) {
+			cfgPath = rest[i+1]
+			rest = append(rest[:i:i], rest[i+2:]...)
+			break
+		}
+		if strings.HasPrefix(rest[i], "-config=") {
+			cfgPath = strings.TrimPrefix(rest[i], "-config=")
+			rest = append(rest[:i:i], rest[i+1:]...)
+			break
+		}
+	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -94,7 +109,7 @@ func runClient(args []string, cfgPath string) int {
 	case "send":
 		fs := flag.NewFlagSet("send", flag.ExitOnError)
 		to := fs.String("to", "", "channel:chatId[:threadId]")
-		fs.Parse(args[1:])
+		fs.Parse(rest)
 		text := strings.Join(fs.Args(), " ")
 		if *to == "" || text == "" {
 			fmt.Fprintln(os.Stderr, `usage: chatmux send -to channel:chatId[:threadId] 文本`)
@@ -209,17 +224,36 @@ func runServer(cfgPath string) int {
 	ul := usage.New(cfg.DataDir)
 	rt.SetUsageLogger(ul)
 	rt.SetSkills(loadSkills(cfg.SkillsDir))
-	// feishu 👍/👎 feedback → usage log
+	// 👍/👎 feedback (feishu/telegram/discord/slack) → usage log
 	for _, ch := range chans {
+		name := ch.Name()
 		if fh, ok := ch.(interface {
 			SetFeedbackHook(func(kind, operator, msgID string))
 		}); ok {
 			fh.SetFeedbackHook(func(kind, operator, msgID string) {
-				log.Printf("feedback %s by %s on %s", kind, operator, msgID)
+				log.Printf("feedback %s by %s on %s (%s)", kind, operator, msgID, name)
 				ul.Log(usage.Record{
-					Agent: "feishu:" + msgID, Mode: "feedback:" + kind,
-					Channel: msgID, ChatID: operator,
+					Agent: "feedback", Mode: "feedback:" + kind,
+					Channel: name, ChatID: operator,
 				})
+			})
+		}
+	}
+	// form card submissions (feishu) → synthetic message into the bus
+	for _, ch := range chans {
+		name := ch.Name()
+		if fh, ok := ch.(interface {
+			SetFormHandler(func(form, chatID, operator string, values map[string]string))
+		}); ok {
+			fh.SetFormHandler(func(form, chatID, operator string, values map[string]string) {
+				log.Printf("form %s submitted by %s in %s", form, operator, chatID)
+				synthetic := channel.Message{
+					Channel: name, ChatID: chatID, UserID: operator,
+					UserName: operator, MentionedMe: true,
+					Text:      formatFormSubmit(cfg, form, operator, values),
+					Timestamp: time.Now(),
+				}
+				go func() { b.Inbound() <- synthetic }()
 			})
 		}
 	}
@@ -263,7 +297,8 @@ func runServer(cfgPath string) int {
 	sched.Start(ctx)
 
 	// ---- admin endpoints ----
-	mountAdmin(&mux, cfg, rt, chans, stop)
+	started := time.Now()
+	mountAdmin(&mux, cfg, rt, chans, stop, started)
 
 	// ---- dashboard ----
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +343,7 @@ func runServer(cfgPath string) int {
 	return 0
 }
 
-func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans map[string]channel.Channel, stop func()) {
+func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans map[string]channel.Channel, stop func(), started time.Time) {
 	guard := func(w http.ResponseWriter, r *http.Request) bool {
 		if cfg.HTTP.AdminToken == "" {
 			return true
@@ -406,6 +441,126 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		}
 		writeJSON(w, map[string]string{"messageId": id})
 	})
+
+	// Prometheus scrape endpoint (no token: bind localhost or firewall it).
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		var b strings.Builder
+		gauge := func(name, help string, v float64) {
+			b.WriteString("# HELP " + name + " " + help + "\n# TYPE " + name + " gauge\n" +
+				fmt.Sprintf("%s %v\n", name, v))
+		}
+		st := rt.Status()
+		b.WriteString("# HELP chatmux_channels_healthy Whether each channel transport is healthy (1/0).\n# TYPE chatmux_channels_healthy gauge\n")
+		for _, n := range sortedChannelNames(chans) {
+			h := 0
+			if chans[n].Healthy() {
+				h = 1
+			}
+			fmt.Fprintf(&b, "chatmux_channels_healthy{channel=%q} %d\n", n, h)
+		}
+		gauge("chatmux_sessions_active", "Conversation anchors held in the session store.", toF(st["sessions"]))
+		gauge("chatmux_turns_in_flight", "Foreground turns currently running.", toF(st["turnsInFlight"]))
+		gauge("chatmux_bg_jobs_active", "Background jobs currently running.", float64(len(toI(st["backgroundJobs"]))))
+		gauge("chatmux_uptime_seconds", "Seconds since server start.", time.Since(started).Seconds())
+
+		aggs, err := usage.Summarize(cfg.DataDir)
+		if err == nil {
+			b.WriteString("# HELP chatmux_usage_calls_total Model/CLI calls per agent.\n# TYPE chatmux_usage_calls_total counter\n")
+			for _, a := range aggs {
+				if a.Agent == "feedback" {
+					continue
+				}
+				fmt.Fprintf(&b, "chatmux_usage_calls_total{agent=%q} %d\n", a.Agent, a.Calls)
+			}
+			b.WriteString("# HELP chatmux_usage_input_tokens_total Input tokens per agent.\n# TYPE chatmux_usage_input_tokens_total counter\n")
+			for _, a := range aggs {
+				if a.Agent == "feedback" {
+					continue
+				}
+				fmt.Fprintf(&b, "chatmux_usage_input_tokens_total{agent=%q} %d\n", a.Agent, a.InputTokens)
+			}
+			b.WriteString("# HELP chatmux_usage_output_tokens_total Output tokens per agent.\n# TYPE chatmux_usage_output_tokens_total counter\n")
+			for _, a := range aggs {
+				if a.Agent == "feedback" {
+					continue
+				}
+				fmt.Fprintf(&b, "chatmux_usage_output_tokens_total{agent=%q} %d\n", a.Agent, a.OutputTokens)
+			}
+			for _, a := range aggs {
+				if a.Agent == "feedback" {
+					fmt.Fprintf(&b, "# HELP chatmux_feedback_up_total Positive feedback presses.\n# TYPE chatmux_feedback_up_total counter\nchatmux_feedback_up_total %d\n", a.FeedbackUp)
+					fmt.Fprintf(&b, "# HELP chatmux_feedback_down_total Negative feedback presses.\n# TYPE chatmux_feedback_down_total counter\nchatmux_feedback_down_total %d\n", a.FeedbackDown)
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = w.Write([]byte(b.String()))
+	})
+}
+
+func sortedChannelNames(chans map[string]channel.Channel) []string {
+	names := make([]string, 0, len(chans))
+	for n := range chans {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func toF(v any) float64 {
+	switch x := v.(type) {
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case float64:
+		return x
+	}
+	return 0
+}
+
+func toI(v any) []any {
+	x, _ := v.([]any)
+	return x
+}
+
+// formatFormSubmit renders a submitted form card as the synthetic user
+// message the agent will see (fields ordered per the config definition).
+func formatFormSubmit(cfg *config.Config, form, operator string, values map[string]string) string {
+	en := cfg.I18n != nil && cfg.I18n.Locale == "en"
+	var b strings.Builder
+	if en {
+		fmt.Fprintf(&b, "[form %s] submitted by %s:\n", form, operator)
+	} else {
+		fmt.Fprintf(&b, "【表单 %s】%s 提交：\n", form, operator)
+	}
+	for _, fc := range cfg.Forms {
+		if fc.Name != form {
+			continue
+		}
+		for _, f := range fc.Fields {
+			if v := strings.TrimSpace(values[f.Name]); v != "" {
+				fmt.Fprintf(&b, "- %s: %s\n", f.Label, v)
+			}
+		}
+		break
+	}
+	// values outside the schema (form edited since config load)
+	known := map[string]bool{}
+	for _, fc := range cfg.Forms {
+		if fc.Name != form {
+			continue
+		}
+		for _, f := range fc.Fields {
+			known[f.Name] = true
+		}
+	}
+	for k, v := range values {
+		if !known[k] && strings.TrimSpace(v) != "" {
+			fmt.Fprintf(&b, "- %s: %s\n", k, v)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // loadSkills reads *.md prompts from dir into name→body map.

@@ -29,14 +29,61 @@ type Options struct {
 }
 
 type Discord struct {
-	name   string // instance name (defaults to "discord")
-	opts   Options
-	client *http.Client
-	seen   *dedup.Store
-	botID  string
+	name         string // instance name (defaults to "discord")
+	opts         Options
+	client       *http.Client
+	seen         *dedup.Store
+	botID        string
+	appID        string // from READY, for interaction followups
+	feedbackHook func(kind, operator, msgID string)
 
 	mu      sync.Mutex
 	healthy bool
+}
+
+// SetFeedbackHook installs the 👍/👎 callback.
+func (d *Discord) SetFeedbackHook(fn func(kind, operator, msgID string)) { d.feedbackHook = fn }
+
+// handleComponent answers 👍/👎 button interactions.
+func (d *Discord) handleComponent(data json.RawMessage) {
+	var it struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+		Type  int    `json:"type"`
+		Data  struct {
+			CustomID string `json:"custom_id"`
+		} `json:"data"`
+		Member struct {
+			User struct {
+				ID       string `json:"id"`
+				Username string `json:"username"`
+			} `json:"user"`
+		} `json:"member"`
+		User struct {
+			ID       string `json:"id"`
+			Username string `json:"username"`
+		} `json:"user"`
+		Message struct {
+			ID string `json:"id"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(data, &it) != nil || !strings.HasPrefix(it.Data.CustomID, "cmx_fb_") {
+		return
+	}
+	kind := strings.TrimPrefix(it.Data.CustomID, "cmx_fb_")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// type 6 = COMPONENT_ACK-style deferred-free ACK for buttons
+	_ = d.rest(ctx, "POST", "/interactions/"+it.ID+"/"+it.Token+"/callback", map[string]any{
+		"type": 6,
+	}, nil)
+	if d.feedbackHook != nil {
+		op := it.Member.User.ID
+		if op == "" {
+			op = it.User.ID
+		}
+		go d.feedbackHook(kind, op, it.Message.ID)
+	}
 }
 
 func New(raw json.RawMessage) (channel.Channel, error) {
@@ -72,7 +119,12 @@ func (d *Discord) Name() string {
 }
 
 // SetName gives the instance its config name (multi-account support).
-func (d *Discord) SetName(n string) { d.name = n }
+func (d *Discord) SetName(n string) {
+	d.name = n
+	// per-instance dedup file: two accounts of one platform must not
+	// share a seen-store (they would swallow each other's messages)
+	d.seen = dedup.New(strings.TrimSuffix(d.opts.DataDir, "/")+"/"+n+"-seen.json", 8*time.Hour, 5000)
+}
 
 func (d *Discord) Healthy() bool {
 	d.mu.Lock()
@@ -208,8 +260,11 @@ func (d *Discord) runGateway(ctx context.Context, dialer *websocket.Dialer, out 
 				switch f.typ {
 				case "READY":
 					var t struct {
-						SessionID string `json:"session_id"`
-						User      struct {
+						SessionID   string `json:"session_id"`
+						Application struct {
+							ID string `json:"id"`
+						} `json:"application"`
+						User struct {
 							ID string `json:"id"`
 						} `json:"user"`
 					}
@@ -217,8 +272,11 @@ func (d *Discord) runGateway(ctx context.Context, dialer *websocket.Dialer, out 
 					*sessionID = t.SessionID
 					d.mu.Lock()
 					d.botID = t.User.ID
+					d.appID = t.Application.ID
 					d.healthy = true
 					d.mu.Unlock()
+				case "INTERACTION_CREATE":
+					d.handleComponent(f.data)
 				case "MESSAGE_CREATE", "DIRECT_MESSAGE_CREATE":
 					if msg, ok := d.toMessage(f.data); ok {
 						select {
@@ -351,6 +409,16 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 		body := map[string]any{"content": c}
 		if i == 0 && opts.ReplyTo != "" {
 			body["message_reference"] = map[string]string{"message_id": opts.ReplyTo}
+		}
+		if opts.Final && i == len(chunks)-1 {
+			// 👍/👎 action row on the final chunk
+			body["components"] = []any{map[string]any{
+				"type": 1,
+				"components": []any{
+					map[string]any{"type": 2, "style": 3, "custom_id": "cmx_fb_up", "label": "👍"},
+					map[string]any{"type": 2, "style": 4, "custom_id": "cmx_fb_down", "label": "👎"},
+				},
+			}}
 		}
 		var res struct {
 			ID string `json:"id"`

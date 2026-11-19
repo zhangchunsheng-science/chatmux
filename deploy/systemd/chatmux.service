@@ -1,0 +1,26 @@
+# chatmux systemd unit — install to /etc/systemd/system/chatmux.service
+#   cp chatmux /usr/local/bin/ && mkdir -p /etc/chatmux
+#   cp chatmux.json /etc/chatmux/ && systemctl enable --now chatmux
+[Unit]
+Description=chatmux - one binary, many chat platforms, one brain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatmux
+Group=chatmux
+WorkingDirectory=/etc/chatmux
+ExecStart=/usr/local/bin/chatmux -config /etc/chatmux/chatmux.json
+Restart=always
+RestartSec=5
+# Provider keys (only the ones you use):
+Environment=OPENAI_API_KEY=
+Environment=ANTHROPIC_API_KEY=
+# Hardening (CLI agents can read the working dir only):
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/chatmux /var/lib/chatmux
+
+[Install]
+WantedBy=multi-user.target

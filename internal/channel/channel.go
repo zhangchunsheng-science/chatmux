@@ -81,6 +81,23 @@ type Channel interface {
 	Healthy() bool
 }
 
+// FormField is one input in an interactive form card.
+type FormField struct {
+	Name        string   `json:"name"`
+	Label       string   `json:"label"`
+	Type        string   `json:"type"` // input | textarea | select
+	Options     []string `json:"options,omitempty"`
+	Placeholder string   `json:"placeholder,omitempty"`
+	Required    *bool    `json:"required,omitempty"`
+}
+
+// FormSender is a Sender whose platform supports interactive form
+// cards. Submitting the form feeds a synthetic message back into the
+// runtime with the collected values.
+type FormSender interface {
+	SendForm(ctx context.Context, formName string, fields []FormField) error
+}
+
 // HTTPMounter is implemented by webhook-based channels (WeCom, Feishu
 // callback mode, ...): endpoints mounted on the shared HTTP server.
 type HTTPMounter interface {

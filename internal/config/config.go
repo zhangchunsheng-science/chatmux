@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
 )
 
@@ -29,6 +30,23 @@ type Config struct {
 	SkillsDir string `json:"skillsDir,omitempty"`
 	// Workflows are multi-step prompt chains runnable via /flow.
 	Workflows []WorkflowConfig `json:"workflows,omitempty"`
+	// I18n picks the bot's reply language (zh default, en).
+	I18n *I18nConfig `json:"i18n,omitempty"`
+	// Forms are card forms users fill in-chat via /form (feishu).
+	Forms []FormConfig `json:"forms,omitempty"`
+}
+
+// FormConfig is one named card form: /form <name> posts the card,
+// submitting it fires a synthetic message at the chat's agent.
+type FormConfig struct {
+	Name   string              `json:"name"`
+	Desc   string              `json:"desc,omitempty"`
+	Fields []channel.FormField `json:"fields"`
+}
+
+// I18nConfig selects runtime reply language.
+type I18nConfig struct {
+	Locale string `json:"locale"` // "zh" | "en"
 }
 
 // TranscribeConfig configures voice-to-text for audio attachments.

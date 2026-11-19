@@ -24,9 +24,10 @@ type Options struct {
 }
 
 type Telegram struct {
-	name   string // instance name (defaults to "telegram")
-	opts   Options
-	client *http.Client
+	name         string // instance name (defaults to "telegram")
+	opts         Options
+	client       *http.Client
+	feedbackHook func(kind, operator, msgID string)
 
 	mu      sync.Mutex
 	offset  int64
@@ -64,6 +65,48 @@ func (t *Telegram) Name() string {
 // SetName gives the instance its config name (multi-account support).
 func (t *Telegram) SetName(n string) { t.name = n }
 
+// handleCallback answers 👍/👎 inline-keyboard presses.
+func (t *Telegram) handleCallback(cb *struct {
+	ID   string `json:"id"`
+	From *struct {
+		ID       int64  `json:"id"`
+		Username string `json:"username"`
+	} `json:"from"`
+	Data    string `json:"data"`
+	Message *struct {
+		MessageID int64 `json:"message_id"`
+		Chat      *struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+	} `json:"message"`
+}) {
+	if cb == nil || !strings.HasPrefix(cb.Data, "cmx_fb_") {
+		return
+	}
+	kind := strings.TrimPrefix(cb.Data, "cmx_fb_")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	toast := "已收到反馈 👌"
+	if kind == "down" {
+		toast = "已收到，下次改进 💪"
+	}
+	_ = t.call(ctx, "answerCallbackQuery", map[string]string{
+		"callback_query_id": cb.ID, "text": toast,
+	}, &struct {
+		OK bool `json:"ok"`
+	}{})
+	if t.feedbackHook != nil {
+		op := ""
+		if cb.From != nil {
+			op = strconv.FormatInt(cb.From.ID, 10)
+		}
+		go t.feedbackHook(kind, op, strconv.FormatInt(cb.Message.MessageID, 10))
+	}
+}
+
+// SetFeedbackHook installs the 👍/👎 callback.
+func (t *Telegram) SetFeedbackHook(fn func(kind, operator, msgID string)) { t.feedbackHook = fn }
+
 func (t *Telegram) Healthy() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -71,8 +114,22 @@ func (t *Telegram) Healthy() bool {
 }
 
 type tgUpdate struct {
-	UpdateID int64 `json:"update_id"`
-	Message  *struct {
+	UpdateID      int64 `json:"update_id"`
+	CallbackQuery *struct {
+		ID   string `json:"id"`
+		From *struct {
+			ID       int64  `json:"id"`
+			Username string `json:"username"`
+		} `json:"from"`
+		Data    string `json:"data"`
+		Message *struct {
+			MessageID int64 `json:"message_id"`
+			Chat      *struct {
+				ID int64 `json:"id"`
+			} `json:"chat"`
+		} `json:"message"`
+	} `json:"callback_query"`
+	Message *struct {
 		MessageID int64 `json:"message_id"`
 		From      *struct {
 			ID        int64  `json:"id"`
@@ -139,7 +196,7 @@ func (t *Telegram) Start(ctx context.Context, out chan<- channel.Message) error 
 			OK     bool       `json:"ok"`
 			Result []tgUpdate `json:"result"`
 		}
-		body := map[string]any{"timeout": 50, "allowed_updates": []string{"message"}}
+		body := map[string]any{"timeout": 50, "allowed_updates": []string{"message", "callback_query"}}
 		t.mu.Lock()
 		if t.offset != 0 {
 			body["offset"] = t.offset
@@ -162,6 +219,10 @@ func (t *Telegram) Start(ctx context.Context, out chan<- channel.Message) error 
 			t.mu.Lock()
 			t.offset = u.UpdateID + 1
 			t.mu.Unlock()
+			if u.CallbackQuery != nil {
+				t.handleCallback(u.CallbackQuery)
+				continue
+			}
 			if msg, ok := t.toMessage(u); ok {
 				select {
 				case out <- msg:
@@ -359,6 +420,13 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 		}
 		if !opts.Final {
 			body["disable_notification"] = true
+		} else if i == len(chunks)-1 {
+			// 👍/👎 inline keyboard on the final chunk
+			body["reply_markup"] = map[string]any{
+				"inline_keyboard": [][]map[string]string{
+					{{"text": "👍", "callback_data": "cmx_fb_up"}, {"text": "👎", "callback_data": "cmx_fb_down"}},
+				},
+			}
 		}
 		var res struct {
 			OK     bool `json:"ok"`

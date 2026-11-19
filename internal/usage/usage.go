@@ -104,11 +104,11 @@ func Summarize(dataDir string) ([]Agg, error) {
 		if json.Unmarshal([]byte(line), &rec) != nil {
 			continue
 		}
-		// feedback rows are logged with Agent=<channel>:<msgID>
+		// feedback rows are logged with Agent="feedback" and Channel=<instance>
 		if strings.HasPrefix(rec.Mode, "feedback:") {
-			name := rec.Channel
+			name := rec.Agent
 			if name == "" {
-				name = rec.Agent
+				name = rec.Channel
 			}
 			a := byAgent[name]
 			if a == nil {

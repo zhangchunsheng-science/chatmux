@@ -73,7 +73,12 @@ func (d *DingTalk) Name() string {
 }
 
 // SetName gives the instance its config name (multi-account support).
-func (d *DingTalk) SetName(n string) { d.name = n }
+func (d *DingTalk) SetName(n string) {
+	d.name = n
+	// per-instance dedup file: two accounts of one platform must not
+	// share a seen-store (they would swallow each other's messages)
+	d.seen = dedup.New(strings.TrimSuffix(d.opts.DataDir, "/")+"/"+n+"-seen.json", 8*time.Hour, 5000)
+}
 
 func (d *DingTalk) Healthy() bool {
 	d.mu.Lock()

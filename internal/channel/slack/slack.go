@@ -33,15 +33,19 @@ type Options struct {
 }
 
 type Slack struct {
-	name   string // instance name (defaults to "slack")
-	opts   Options
-	client *http.Client
-	seen   *dedup.Store
-	botID  string
+	name         string // instance name (defaults to "slack")
+	opts         Options
+	client       *http.Client
+	seen         *dedup.Store
+	botID        string
+	feedbackHook func(kind, operator, msgID string)
 
 	mu      sync.Mutex
 	healthy bool
 }
+
+// SetFeedbackHook installs the 👍/👍 callback.
+func (s *Slack) SetFeedbackHook(fn func(kind, operator, msgID string)) { s.feedbackHook = fn }
 
 func New(raw json.RawMessage) (channel.Channel, error) {
 	var o Options
@@ -73,7 +77,12 @@ func (s *Slack) Name() string {
 }
 
 // SetName gives the instance its config name (multi-account support).
-func (s *Slack) SetName(n string) { s.name = n }
+func (s *Slack) SetName(n string) {
+	s.name = n
+	// per-instance dedup file: two accounts of one platform must not
+	// share a seen-store (they would swallow each other's messages)
+	s.seen = dedup.New(strings.TrimSuffix(s.opts.DataDir, "/")+"/"+n+"-seen.json", 8*time.Hour, 5000)
+}
 
 func (s *Slack) Healthy() bool {
 	s.mu.Lock()
@@ -187,10 +196,59 @@ func (s *Slack) runSocketMode(ctx context.Context, dialer *websocket.Dialer, out
 			switch env.Type {
 			case "events_api":
 				s.handleEvent(ctx, env.Payload, out)
+			case "interactive":
+				s.handleInteractive(env.Payload)
 			case "disconnect", "reconnect":
 				return fmt.Errorf("slack asked reconnect: %s", env.Reason)
 			}
 		}
+	}
+}
+
+// handleInteractive answers 👍/👎 block-action presses.
+func (s *Slack) handleInteractive(payload json.RawMessage) {
+	var it struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+		Actions []struct {
+			ActionID string `json:"action_id"`
+		} `json:"actions"`
+		Message struct {
+			TS string `json:"ts"`
+		} `json:"message"`
+		ResponseURL string `json:"response_url"`
+	}
+	if json.Unmarshal(payload, &it) != nil || len(it.Actions) == 0 {
+		return
+	}
+	if !strings.HasPrefix(it.Actions[0].ActionID, "cmx_fb_") {
+		return
+	}
+	kind := strings.TrimPrefix(it.Actions[0].ActionID, "cmx_fb_")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if it.ResponseURL != "" {
+		// ephemeral ack via response_url
+		text := "已收到反馈 👌"
+		if kind == "down" {
+			text = "已收到，下次改进 💪"
+		}
+		b, _ := json.Marshal(map[string]any{
+			"response_type": "ephemeral", "replace_original": false,
+			"text": text,
+		})
+		req, err := http.NewRequestWithContext(ctx, "POST", it.ResponseURL, bytes.NewReader(b))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := s.client.Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}
+	if s.feedbackHook != nil {
+		go s.feedbackHook(kind, it.User.ID, it.Message.TS)
 	}
 }
 
@@ -357,6 +415,20 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 	body := map[string]any{"channel": s.chatID, "text": text}
 	if opts.ReplyTo != "" {
 		body["thread_ts"] = opts.ReplyTo
+	}
+	if opts.Final {
+		// 👍/👎 buttons as a block action row
+		body["blocks"] = []any{
+			map[string]any{"type": "section", "text": map[string]any{
+				"type": "mrkdwn", "text": text,
+			}},
+			map[string]any{"type": "actions", "elements": []any{
+				map[string]any{"type": "button", "action_id": "cmx_fb_up",
+					"text": map[string]any{"type": "plain_text", "text": "👍"}},
+				map[string]any{"type": "button", "action_id": "cmx_fb_down",
+					"text": map[string]any{"type": "plain_text", "text": "👎"}},
+			}},
+		}
 	}
 	var res struct {
 		OK    bool   `json:"ok"`

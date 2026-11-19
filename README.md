@@ -89,6 +89,7 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/system [提示词]` | 查看/覆盖 system 提示词 |
 | `/skills` · `/skill <名> <指令>` | 列出 / 使用技能 |
 | `/flows` · `/flow <名> <输入>` | 列出 / 后台跑多步工作流 |
+| `/forms` · `/form <名>` | 列出 / 发送表单卡片（飞书） |
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
 
@@ -139,10 +140,55 @@ Telegram 音频文件均支持。
 列表、按 agent 的用量与 👍/👎 反馈统计，5 秒自动刷新（adminToken 输入一次
 存本地）。
 
-## 反馈按钮（飞书）
+## 反馈按钮
 
-飞书最终回复以卡片发出，带 👍/👎 按钮；点按即时 toast 回执，结果计入
-usage.jsonl 与看板统计。
+最终回复在飞书（卡片按钮）、Telegram（inline keyboard）、Discord
+（components 按钮）、Slack（blocks actions）都带 👍/👎；点按即时回执，
+结果计入 usage.jsonl、看板与 /metrics。
+
+## 表单卡片（飞书）
+
+chatmux.json 的 `forms[]` 定义表单字段（input/textarea/select），`/form <名>`
+发出卡片，群友填写提交后，内容被合成成一条用户消息发给该会话的 agent
+处理——适合报 bug、登记需求等结构化入口：
+
+```json
+"forms": [{ "name": "bug", "desc": "报 bug", "fields": [
+  { "name": "title", "label": "标题", "type": "input", "required": true },
+  { "name": "sev", "label": "严重程度", "type": "select", "options": ["低","中","高"] }
+]}]
+```
+
+## CLI 沙箱
+
+CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work，默认断网）：
+
+```json
+"cli": { "type": "claude", "workingDir": "/srv/project",
+         "sandbox": { "mode": "docker", "image": "node:20-slim", "network": "none" } }
+```
+
+## 运维接口
+
+- `GET /healthz` — 存活/降级探测（任一通道断开即 503）
+- `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
+  每 agent 调用数与 token、👍/👎 总量、uptime
+- `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）
+- 客户端：`chatmux status|stop|send -to channel:chatId 文本`（`-config`
+  可放子命令后）
+
+会话与 CLI resume id 分别快照到 `dataDir/sessions.json` /
+`dataDir/cli-sessions.json`（原子写），重启不丢上下文；回复语言用
+`"i18n": {"locale": "en"}` 一键切换（默认 zh）。
+
+## 部署
+
+- **Docker**：`docker build -t chatmux .` 配置挂 `/app/chatmux.json`，数据卷
+  `/app/data`
+- **systemd**：`deploy/systemd/chatmux.service`（含读写目录加固）
+- **launchd**：`deploy/launchd/com.zhangchunsheng.chatmux.plist`
+- **CI/发布**：push 跑 vet+test+build；打 `v*` tag 自动交叉编译
+  linux/darwin/windows × amd64/arm64 并挂到 GitHub Release
 
 ## 各平台接入要点
 
@@ -167,10 +213,14 @@ usage.jsonl 与看板统计。
 
 ## 状态
 
-v0.3：v0.2 全量 + 后台长任务（/bg /jobs /stop 扩展）+ 引用上下文（飞书/TG/
-Discord/Slack）+ 飞书 👍/👎 反馈卡片 + 语音转写（whisper 兼容）+ 网页看板 +
-技能（skillsDir）+ 工作流（{{prev}}/{{input}} 链）+ gemini CLI 预设。
-未做（欢迎 PR）：多平台按钮（目前仅飞书）、卡片表单、指标导出。
+v0.4：v0.3 全量 + 多平台 👍/👎 按钮（飞书/TG/Discord/Slack）+ 飞书卡片表单
+（forms[] + /form）+ CLI 沙箱（docker 隔离）+ 会话持久化（重启不丢）+ i18n
+（zh/en）+ Prometheus /metrics + 多实例通道（同名平台多账号，去重按实例隔离）+
+部署化（Dockerfile / CI / tag 发布 / systemd / launchd）。
+
+v0.3：后台长任务（/bg /jobs /stop 扩展）+ 引用上下文（飞书/TG/Discord/Slack）
++ 语音转写（whisper 兼容）+ 网页看板 + 技能（skillsDir）+ 工作流
+（{{prev}}/{{input}} 链）+ gemini CLI 预设。
 
 ## License
 

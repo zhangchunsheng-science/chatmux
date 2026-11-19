@@ -65,14 +65,25 @@ func NewRuntime(cfg *config.Config, registry *provider.Registry, chans map[strin
 	return &Runtime{
 		cfg:      cfg,
 		registry: registry,
-		sessions: session.NewStore(),
+		sessions: session.LoadSessions(cfg.DataDir),
 		chans:    chans,
-		cli:      cliagent.NewRunner(),
+		cli:      cliagent.NewRunner(cfg.DataDir),
 		dataDir:  cfg.DataDir,
 		turns:    map[session.Key]*turn{},
 		jobs:     map[string]*bgJob{},
 	}
 }
+
+// persistSessions snapshots conversations to disk (async, best effort).
+func (r *Runtime) persistSessions() {
+	if r.dataDir == "" {
+		r.dataDir = "data"
+	}
+	go func() { _ = r.sessions.Save(r.dataDir) }()
+}
+
+// Shutdown persists state for a clean restart.
+func (r *Runtime) Shutdown() { r.persistSessions() }
 
 // SetSkills installs skill prompts (name → markdown body).
 func (r *Runtime) SetSkills(m map[string]string) { r.skills = m }
@@ -110,7 +121,7 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 		// nudge the user that we saw them (best effort, non-fatal)
 		if s, err := r.senderFor(msg); err == nil {
 			go func() {
-				_, _ = s.Send(context.Background(), "已收到，正在处理上一条；再发 /stop 可打断当前任务，/bg 可丢后台。", channel.SendOptions{})
+				_, _ = s.Send(context.Background(), r.say("queued"), channel.SendOptions{})
 			}()
 		}
 		return
@@ -232,27 +243,27 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			r.mu.Unlock()
 			if ok {
 				t.cancel()
-				reply("已请求打断当前任务。")
+				reply(r.say("stop.fg"))
 			} else {
-				reply("当前没有在处理的前台任务。")
+				reply(r.say("stop.fg.none"))
 			}
 		case arg == "bg" || arg == "all":
 			n := r.stopAllJobs()
 			if n > 0 {
-				reply(fmt.Sprintf("已停止 %d 个后台任务。", n))
+				reply(r.say("stop.bg.done", n))
 			} else {
-				reply("没有在跑的后台任务。")
+				reply(r.say("stop.bg.none"))
 			}
 		default:
 			if r.stopJob(arg) {
-				reply("已停止后台任务 " + arg + "。")
+				reply(r.say("stop.job.done", arg))
 			} else {
-				reply("没有找到后台任务 " + arg + "（/jobs 查看）。")
+				reply(r.say("stop.job.none", arg))
 			}
 		}
 	case "/bg":
 		if arg == "" {
-			reply("用法: /bg <任务描述> — 丢到后台跑，会话继续可用")
+			reply(r.say("bg.usage"))
 			break
 		}
 		r.startBgJob(key, msg, a, sender, arg, "")
@@ -264,19 +275,19 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		}
 		r.mu.Unlock()
 		if len(jobs) == 0 {
-			reply("没有在跑的后台任务。")
+			reply(r.say("jobs.none"))
 			break
 		}
-		lines := []string{"后台任务："}
+		lines := []string{r.say("jobs.header")}
 		for _, j := range jobs {
-			lines = append(lines, fmt.Sprintf("· %s [%s] %s — 已跑 %s（/stop %s 停止）",
-				j.id, flowTag(j), truncate(j.desc, 40), time.Since(j.started).Round(time.Second), j.id))
+			lines = append(lines, r.say("jobs.line", j.id, flowTag(j), truncate(j.desc, 40), time.Since(j.started).Round(time.Second), j.id))
 		}
 		reply(strings.Join(lines, "\n"))
 	case "/new":
 		r.sessions.Reset(key)
 		r.cli.Reset(key.String())
-		reply("已开启新会话。")
+		r.persistSessions()
+		reply(r.say("new.done"))
 	case "/status":
 		r.mu.Lock()
 		_, busy := r.turns[key]
@@ -292,33 +303,34 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 				model += " (resume " + resume[:min(8, len(resume))] + ")"
 			}
 		}
-		status := "空闲"
+		status := r.say("status.idle")
 		if busy {
-			status = "处理中"
+			status = r.say("status.busy")
 		}
-		reply(fmt.Sprintf("chatmux %s · 会话 %s · 模式 %s · 模型 %s · 历史 %d 条 · 后台任务 %d 个",
-			status, shortKey(key), mode, model, r.sessions.Count(key), jobsN))
+		reply(r.say("status.fmt", status, shortKey(key), mode, model, r.sessions.Count(key), jobsN))
 	case "/model":
 		if arg == "" {
 			sess := r.sessions.Get(key)
 			cur := firstNonEmpty(sess.Model, a.Model, "(默认)")
-			reply(fmt.Sprintf("当前模型: %s\n用法: /model <模型名> 切换", cur))
+			reply(r.say("model.cur", cur))
 			break
 		}
 		r.sessions.Set(key, func(s *session.Session) { s.Model = arg })
-		reply("模型已切换为 " + arg + "，下一条消息生效。")
+		r.persistSessions()
+		reply(r.say("model.set", arg))
 	case "/system":
 		if arg == "" {
 			sess := r.sessions.Get(key)
 			cur := firstNonEmpty(sess.System, a.System, defaultSystemPrompt)
-			reply("当前 system 提示词:\n" + truncate(cur, 300) + "\n\n用法: /system <新提示词>；/new 恢复默认")
+			reply(r.say("system.cur", truncate(cur, 300)))
 			break
 		}
 		r.sessions.Set(key, func(s *session.Session) { s.System = arg })
-		reply("system 提示词已更新。")
+		r.persistSessions()
+		reply(r.say("system.set"))
 	case "/skills":
 		if len(r.skills) == 0 {
-			reply("没有已安装技能。把 *.md 放到 skillsDir 并重启。")
+			reply(r.say("skills.none"))
 			break
 		}
 		names := make([]string, 0, len(r.skills))
@@ -326,20 +338,20 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			names = append(names, n)
 		}
 		sort.Strings(names)
-		lines := []string{"可用技能（/skill <名> [指令] 使用）："}
+		lines := []string{r.say("skills.header")}
 		for _, n := range names {
-			lines = append(lines, "· "+n+" — "+truncate(strings.TrimSpace(r.skills[n]), 50))
+			lines = append(lines, r.say("skills.line", n, truncate(strings.TrimSpace(r.skills[n]), 50)))
 		}
 		reply(strings.Join(lines, "\n"))
 	case "/skill":
 		name, rest, _ := strings.Cut(arg, " ")
 		body, ok := r.skills[name]
 		if !ok {
-			reply("没有技能 " + name + "（/skills 查看）。")
+			reply(r.say("skill.none", name))
 			break
 		}
 		if strings.TrimSpace(rest) == "" {
-			reply("用法: /skill " + name + " <补充指令>")
+			reply(r.say("skill.usage", name))
 			break
 		}
 		// run as a normal turn with the skill prompt prepended
@@ -348,16 +360,16 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		go r.launchTurn(key, enriched, a, sender)
 	case "/flows":
 		if len(r.cfg.Workflows) == 0 {
-			reply("没有配置工作流。chatmux.json 的 workflows[] 定义多步链。")
+			reply(r.say("flows.none"))
 			break
 		}
-		lines := []string{"可用工作流（/flow <名> [输入] 后台执行）："}
+		lines := []string{r.say("flows.header")}
 		for _, wf := range r.cfg.Workflows {
 			d := wf.Desc
 			if d == "" {
-				d = fmt.Sprintf("%d 步", len(wf.Steps))
+				d = fmt.Sprintf("%d steps", len(wf.Steps))
 			}
-			lines = append(lines, "· "+wf.Name+" — "+d)
+			lines = append(lines, r.say("flows.line", wf.Name, d))
 		}
 		reply(strings.Join(lines, "\n"))
 	case "/flow":
@@ -370,28 +382,56 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			}
 		}
 		if wf == nil {
-			reply("没有工作流 " + name + "（/flows 查看）。")
+			reply(r.say("flow.none", name))
 			break
 		}
 		if strings.TrimSpace(rest) == "" {
-			reply("用法: /flow " + name + " <输入>")
+			reply(r.say("flow.usage", name))
 			break
 		}
 		r.startBgJob(key, msg, a, sender, rest, name)
+	case "/forms":
+		if len(r.cfg.Forms) == 0 {
+			reply(r.say("forms.none"))
+			break
+		}
+		lines := []string{r.say("forms.header")}
+		for _, fc := range r.cfg.Forms {
+			d := fc.Desc
+			if d == "" {
+				d = fmt.Sprintf("%d fields", len(fc.Fields))
+			}
+			lines = append(lines, r.say("forms.line", fc.Name, d))
+		}
+		reply(strings.Join(lines, "\n"))
+	case "/form":
+		if arg == "" {
+			reply(r.say("form.usage"))
+			break
+		}
+		var fc *config.FormConfig
+		for i := range r.cfg.Forms {
+			if r.cfg.Forms[i].Name == arg {
+				fc = &r.cfg.Forms[i]
+				break
+			}
+		}
+		if fc == nil {
+			reply(r.say("form.none", arg))
+			break
+		}
+		fs, ok := sender.(channel.FormSender)
+		if !ok {
+			reply(r.say("form.unsupported"))
+			break
+		}
+		if err := fs.SendForm(context.Background(), fc.Name, fc.Fields); err != nil {
+			reply(r.say("form.err", err))
+			break
+		}
+		reply(r.say("form.sent", fc.Name))
 	case "/help":
-		reply(strings.Join([]string{
-			"chatmux 命令：",
-			"/stop [bg|任务id] — 打断前台/后台任务",
-			"/bg <任务> — 丢后台跑，会话不被占用",
-			"/jobs — 列出后台任务",
-			"/new — 开启全新会话（清历史/CLI 会话）",
-			"/status — 查看当前会话状态",
-			"/model [名称] — 查看/切换模型",
-			"/system [提示词] — 查看/覆盖 system 提示词",
-			"/skills · /skill <名> <指令> — 使用技能",
-			"/flows · /flow <名> <输入> — 跑多步工作流",
-			"群里默认需要 @机器人 触发。",
-		}, "\n"))
+		reply(r.say("help"))
 	default:
 		// Unknown slash command: let the model see it (agent may explain).
 		return false
@@ -412,7 +452,7 @@ func flowTag(j *bgJob) string {
 func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg channel.Message, resultPrefix string) {
 	prov, ok := r.registry.Get(providerName(t.agent))
 	if !ok {
-		_, _ = t.sender.Send(ctx, "模型提供方未配置。", channel.SendOptions{Final: true})
+		_, _ = t.sender.Send(ctx, r.say("provider.none"), channel.SendOptions{Final: true})
 		return
 	}
 
@@ -426,7 +466,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	userMsg := provider.Msg{Role: provider.User, Content: r.buildPrompt(msg), Name: msg.UserName}
 	r.attachImages(ctx, msg, &userMsg)
 	if vt := r.transcribeAudio(ctx, msg); vt != "" {
-		userMsg.Content = strings.TrimSpace(userMsg.Content + "\n[语音]\n" + vt)
+		userMsg.Content = strings.TrimSpace(userMsg.Content + "\n" + r.say("voice.tag") + "\n" + vt)
 	}
 
 	model := firstNonEmpty(sess.Model, t.agent.Model)
@@ -444,7 +484,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	start := time.Now()
 	stream, err := prov.Stream(ctx, req)
 	if err != nil {
-		_, _ = t.sender.Send(ctx, "模型调用失败: "+err.Error(), channel.SendOptions{Final: true})
+		_, _ = t.sender.Send(ctx, r.say("model.fail", err.Error()), channel.SendOptions{Final: true})
 		return
 	}
 
@@ -461,7 +501,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 				return
 			}
 			if placeholderID == "" {
-				_, _ = t.sender.Send(ctx, "模型出错: "+d.Err.Error(), channel.SendOptions{Final: true})
+				_, _ = t.sender.Send(ctx, r.say("model.err", d.Err.Error()), channel.SendOptions{Final: true})
 			} else {
 				_ = t.sender.Replace(ctx, placeholderID, sb.String()+"\n\n[出错: "+d.Err.Error()+"]")
 			}
@@ -490,7 +530,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 
 	out := resultPrefix + sb.String()
 	if strings.TrimSpace(out) == "" {
-		out = "(空回复)"
+		out = r.say("empty.reply")
 	}
 	r.usage.Log(usage.Record{
 		Agent: t.agent.Name, Mode: "api", Provider: providerName(t.agent), Model: model,
@@ -520,9 +560,9 @@ func (r *Runtime) buildPrompt(msg channel.Message) string {
 	}
 	who := msg.Quoted.UserName
 	if who == "" {
-		who = "某人"
+		who = r.say("quote.anon")
 	}
-	return "[引用 " + who + " 的消息]\n" + truncate(strings.TrimSpace(msg.Quoted.Text), 1000) + "\n---\n" + msg.Text
+	return r.say("quote.fmt", who, truncate(strings.TrimSpace(msg.Quoted.Text), 1000), msg.Text)
 }
 
 // transcribeAudio voice-notes an audio attachment into text.
@@ -571,9 +611,9 @@ func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) stri
 // reportInterrupt posts the [已打断] notice for a cancelled turn.
 func (r *Runtime) reportInterrupt(ctx context.Context, t *turn, msg channel.Message, placeholderID, partial string) {
 	if placeholderID != "" {
-		_ = t.sender.Replace(ctx, placeholderID, partial+"\n\n[已打断]")
+		_ = t.sender.Replace(ctx, placeholderID, partial+"\n\n"+r.say("interrupted"))
 	} else {
-		_, _ = t.sender.Send(ctx, "[已打断]", channel.SendOptions{Final: true})
+		_, _ = t.sender.Send(ctx, r.say("interrupted"), channel.SendOptions{Final: true})
 	}
 	_ = t.sender.React(ctx, msg.ID, "octagonal_sign")
 }
@@ -600,7 +640,7 @@ func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg 
 	start := time.Now()
 	events, err := r.cli.Run(ctx, cfg, key.String(), prompt)
 	if err != nil {
-		_, _ = t.sender.Send(ctx, "启动 CLI 失败: "+err.Error(), channel.SendOptions{Final: true})
+		_, _ = t.sender.Send(ctx, r.say("cli.fail", err.Error()), channel.SendOptions{Final: true})
 		return
 	}
 
@@ -725,9 +765,11 @@ func (r *Runtime) attachImages(ctx context.Context, msg channel.Message, out *pr
 	}
 }
 
-// finish records the completed exchange into session history.
+// finish records the completed exchange into session history and
+// snapshots it to disk.
 func (r *Runtime) finish(key session.Key, userMsg provider.Msg, out string) {
 	r.sessions.Append(key, userMsg, provider.Msg{Role: provider.Assistant, Content: out})
+	r.persistSessions()
 }
 
 // Status reports runtime state for the admin endpoint.
@@ -817,15 +859,15 @@ func (r *Runtime) startBgJob(key session.Key, msg channel.Message, a *config.Age
 
 	go func() {
 		execKey := session.Key{Channel: key.Channel, ChatID: key.ChatID + "|job" + id}
-		prefix := fmt.Sprintf("✅ 后台任务 %s（%s）完成：\n\n", id, truncate(task, 60))
+		prefix := r.say("bg.done", id, truncate(task, 60), "") + "\n\n"
 		if flowName != "" {
 			out, err := r.runFlow(jctx, execKey, flowName, task)
 			if ctxErr := jctx.Err(); ctxErr != nil {
-				_, _ = sender.Send(context.Background(), fmt.Sprintf("⛔ 后台任务 %s（工作流 %s）已停止。", id, flowName), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
+				_, _ = sender.Send(context.Background(), r.say("bg.stopped", id, flowName), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
 			} else if err != nil {
-				_, _ = sender.Send(context.Background(), fmt.Sprintf("⚠️ 工作流 %s 失败: %v", flowName, err), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
+				_, _ = sender.Send(context.Background(), r.say("flow.fail", flowName, err), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
 			} else {
-				_, _ = sender.Send(context.Background(), fmt.Sprintf("✅ 工作流 %s（%s）完成：\n\n%s", flowName, id, out), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
+				_, _ = sender.Send(context.Background(), r.say("flow.done", flowName, id, out), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
 			}
 		} else {
 			t := &turn{cancel: cancel, done: make(chan struct{}), agent: a, sender: sender, started: time.Now()}
@@ -839,9 +881,9 @@ func (r *Runtime) startBgJob(key session.Key, msg channel.Message, a *config.Age
 	}()
 
 	go func() {
-		notice := fmt.Sprintf("🚀 后台任务 %s 已启动，会话继续可用；/jobs 查看，/stop %s 停止。", id, id)
+		notice := r.say("bg.started", id, id)
 		if flowName != "" {
-			notice = fmt.Sprintf("🚀 工作流 %s 已后台启动（%s）；/jobs 查看，/stop %s 停止。", flowName, id, id)
+			notice = r.say("flow.started", flowName, id, id)
 		}
 		_, _ = sender.Send(context.Background(), notice, channel.SendOptions{Final: true})
 	}()

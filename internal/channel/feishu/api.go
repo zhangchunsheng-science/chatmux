@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 )
 
 // api is a minimal Feishu OpenAPI REST client: tenant_access_token cache
@@ -333,6 +335,72 @@ func feedbackCard(text string) string {
 			},
 			map[string]any{"tag": "hr"},
 		},
+	}
+	b, _ := json.Marshal(card)
+	return string(b)
+}
+
+// formCard builds a card JSON 2.0 form: labeled inputs + a form_submit
+// button carrying {"chatmux_form": name}. Submitted values come back on
+// the card-action callback in Action.FormValue.
+func formCard(name, desc string, fields []channel.FormField) string {
+	elements := []any{}
+	if desc != "" {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": desc})
+	}
+	for _, f := range fields {
+		input := map[string]any{"tag": "input", "name": f.Name}
+		if f.Label != "" {
+			input["label"] = map[string]string{"tag": "plain_text", "content": f.Label}
+		}
+		if f.Required != nil && *f.Required {
+			input["required"] = true
+		}
+		ph := f.Placeholder
+		if ph == "" {
+			ph = f.Label
+		}
+		switch f.Type {
+		case "select":
+			opts := make([]any, 0, len(f.Options))
+			for _, o := range f.Options {
+				opts = append(opts, map[string]any{"text": map[string]string{"tag": "plain_text", "content": o}})
+			}
+			input["element"] = map[string]any{
+				"tag":         "select_static",
+				"placeholder": map[string]string{"tag": "plain_text", "content": ph},
+				"options":     opts,
+			}
+		case "textarea":
+			input["element"] = map[string]any{
+				"tag":         "plain_text_input",
+				"multiline":   true,
+				"placeholder": map[string]string{"tag": "plain_text", "content": ph},
+			}
+		default: // input
+			input["element"] = map[string]any{
+				"tag":         "plain_text_input",
+				"placeholder": map[string]string{"tag": "plain_text", "content": ph},
+			}
+		}
+		elements = append(elements, input)
+	}
+	elements = append(elements, map[string]any{
+		"tag":          "button",
+		"action_type":  "form_submit",
+		"name":         "chatmux_form_submit",
+		"text":         map[string]string{"tag": "plain_text", "content": "提交"},
+		"button_style": "primary",
+		"form_value":   map[string]string{"chatmux_form": name},
+	})
+	card := map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"update_multi": true},
+		"header": map[string]any{
+			"title":    map[string]string{"tag": "plain_text", "content": name},
+			"template": "blue",
+		},
+		"body": map[string]any{"elements": elements},
 	}
 	b, _ := json.Marshal(card)
 	return string(b)

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- chatmux launchd agent — install to ~/Library/LaunchAgents/ then:
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.zhangchunsheng.chatmux.plist
+     (if it reports I/O error 5: launchctl enable ... first, then bootstrap again) -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zhangchunsheng.chatmux</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/chatmux</string>
+        <string>-config</string>
+        <string>/Users/你的用户名/chatmux/chatmux.json</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/chatmux.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/chatmux.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OPENAI_API_KEY</key>
+        <string></string>
+        <key>ANTHROPIC_API_KEY</key>
+        <string></string>
+    </dict>
+</dict>
+</plist>

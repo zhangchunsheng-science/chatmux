@@ -1,0 +1,7 @@
+.git
+data
+*.md
+.github
+deploy
+skills
+chatmux.json

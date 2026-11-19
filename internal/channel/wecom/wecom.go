@@ -89,7 +89,12 @@ func (w *WeCom) Name() string {
 }
 
 // SetName gives the instance its config name (multi-account support).
-func (w *WeCom) SetName(n string) { w.name = n }
+func (w *WeCom) SetName(n string) {
+	w.name = n
+	// per-instance dedup file: two accounts of one platform must not
+	// share a seen-store (they would swallow each other's messages)
+	w.seen = dedup.New(filepath.Join(w.opts.DataDir, n+"-seen.json"), 8*time.Hour, 5000)
+}
 
 func (w *WeCom) Healthy() bool { return true } // webhook channel: healthy if process is up
 

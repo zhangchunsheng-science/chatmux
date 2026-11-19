@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -29,10 +31,37 @@ type Event struct {
 type Runner struct {
 	mu       sync.Mutex
 	sessions map[string]string // chatmux anchor key → CLI session id
+	persist  string            // cli-sessions.json path, "" = memory only
 }
 
-func NewRunner() *Runner {
-	return &Runner{sessions: map[string]string{}}
+// NewRunner optionally restores resume ids persisted at dataDir.
+func NewRunner(dataDir ...string) *Runner {
+	r := &Runner{sessions: map[string]string{}}
+	if len(dataDir) > 0 && dataDir[0] != "" {
+		r.persist = filepath.Join(dataDir[0], "cli-sessions.json")
+		if b, err := os.ReadFile(r.persist); err == nil {
+			var m map[string]string
+			if json.Unmarshal(b, &m) == nil {
+				r.sessions = m
+			}
+		}
+	}
+	return r
+}
+
+// save snapshots resume ids (atomic tmp+rename, best effort).
+func (r *Runner) save() {
+	if r.persist == "" {
+		return
+	}
+	b, err := json.Marshal(r.sessions)
+	if err != nil {
+		return
+	}
+	tmp := r.persist + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, r.persist)
+	}
 }
 
 // ResumeID returns the stored CLI session id for an anchor.
@@ -47,15 +76,17 @@ func (r *Runner) setResumeID(anchor, id string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.sessions[anchor] = id
+	r.mu.Unlock()
+	r.save()
 }
 
 // Reset forgets the CLI session for an anchor (next turn starts fresh).
 func (r *Runner) Reset(anchor string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	delete(r.sessions, anchor)
+	r.mu.Unlock()
+	r.save()
 }
 
 // Config describes how to invoke one CLI.
@@ -64,29 +95,33 @@ type Config struct {
 	Bin        string `json:"bin"`   // executable; defaults per type
 	Model      string `json:"model"` // passed through when supported
 	WorkingDir string `json:"workingDir"`
+	// Sandbox isolates the CLI process (mode "docker").
+	Sandbox *SandboxConfig `json:"sandbox,omitempty"`
 	// generic type:
 	PromptArg  bool   `json:"promptArg"`  // pass prompt as argv (else stdin)
 	ResumeFlag string `json:"resumeFlag"` // e.g. "--resume"
 }
 
-// Run executes one turn: builds the command line, streams events.
-// anchor keys the resume memory. Cancelling ctx kills the process.
-func (r *Runner) Run(ctx context.Context, cfg Config, anchor, prompt string) (<-chan Event, error) {
-	bin := cfg.Bin
-	var args []string
-	promptViaStdin := true
+// SandboxConfig isolates the CLI in a container so a rogue agent can't
+// touch the host. mode "docker": the CLI runs as
+// docker run --rm -i [--network none] [-v workdir:/work] <image> <bin>...
+type SandboxConfig struct {
+	Mode    string `json:"mode"`              // "docker" ("" = off)
+	Image   string `json:"image,omitempty"`   // default node:20-slim
+	Network string `json:"network,omitempty"` // default "none"
+}
 
+// buildInvocation derives the executable + argv for one turn.
+func buildInvocation(cfg Config, resumeID, prompt string) (bin string, args []string, promptViaStdin bool, err error) {
+	promptViaStdin = true
 	switch cfg.Type {
 	case "claude", "":
-		if cfg.Type == "" {
-			cfg.Type = "claude"
-		}
 		if bin == "" {
 			bin = "claude"
 		}
 		args = []string{"-p", "--output-format", "stream-json", "--verbose"}
-		if resume := r.ResumeID(anchor); resume != "" {
-			args = append(args, "--resume", resume)
+		if resumeID != "" {
+			args = append(args, "--resume", resumeID)
 		}
 		if cfg.Model != "" {
 			args = append(args, "--model", cfg.Model)
@@ -96,8 +131,8 @@ func (r *Runner) Run(ctx context.Context, cfg Config, anchor, prompt string) (<-
 			bin = "codex"
 		}
 		args = []string{"exec", "--json"}
-		if resume := r.ResumeID(anchor); resume != "" {
-			args = append(args, "resume", resume)
+		if resumeID != "" {
+			args = append(args, "resume", resumeID)
 		}
 		if cfg.Model != "" {
 			args = append(args, "-m", cfg.Model)
@@ -114,18 +149,59 @@ func (r *Runner) Run(ctx context.Context, cfg Config, anchor, prompt string) (<-
 			args = append(args, "-m", cfg.Model)
 		}
 	case "generic":
-		if bin == "" {
-			return nil, fmt.Errorf("cliagent: generic runner needs bin")
+		if cfg.Bin == "" {
+			return "", nil, false, fmt.Errorf("cliagent: generic runner needs bin")
 		}
+		bin = cfg.Bin
 		promptViaStdin = !cfg.PromptArg
 		if cfg.PromptArg {
 			args = append(args, prompt)
 		}
-		if resume := r.ResumeID(anchor); resume != "" && cfg.ResumeFlag != "" {
-			args = append(args, cfg.ResumeFlag, resume)
+		if resumeID != "" && cfg.ResumeFlag != "" {
+			args = append(args, cfg.ResumeFlag, resumeID)
 		}
 	default:
-		return nil, fmt.Errorf("cliagent: unknown type %q", cfg.Type)
+		return "", nil, false, fmt.Errorf("cliagent: unknown type %q", cfg.Type)
+	}
+	// sandbox wrap: bin+args run inside the container instead
+	if cfg.Sandbox != nil && cfg.Sandbox.Mode == "docker" {
+		bin, args, err = wrapDocker(cfg, bin, args)
+	}
+	return bin, args, promptViaStdin, err
+}
+
+// wrapDocker rewrites the invocation as docker run --rm -i <image> bin args…
+func wrapDocker(cfg Config, bin string, args []string) (string, []string, error) {
+	sc := cfg.Sandbox
+	image := sc.Image
+	if image == "" {
+		image = "node:20-slim"
+	}
+	net := sc.Network
+	if net == "" {
+		net = "none"
+	}
+	dargs := []string{"run", "--rm", "-i", "--network", net}
+	if cfg.WorkingDir != "" {
+		abs, err := filepath.Abs(cfg.WorkingDir)
+		if err != nil {
+			return "", nil, err
+		}
+		dargs = append(dargs, "-v", abs+":/work", "-w", "/work")
+	}
+	dargs = append(dargs, image, bin)
+	return "docker", append(dargs, args...), nil
+}
+
+// Run executes one turn: builds the command line, streams events.
+// anchor keys the resume memory. Cancelling ctx kills the process.
+func (r *Runner) Run(ctx context.Context, cfg Config, anchor, prompt string) (<-chan Event, error) {
+	if cfg.Type == "" {
+		cfg.Type = "claude"
+	}
+	bin, args, promptViaStdin, err := buildInvocation(cfg, r.ResumeID(anchor), prompt)
+	if err != nil {
+		return nil, err
 	}
 
 	cmd := exec.CommandContext(ctx, bin, args...)

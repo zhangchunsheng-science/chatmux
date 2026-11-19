@@ -92,7 +92,8 @@
       "cli": {
         "type": "claude",
         "model": "sonnet",
-        "workingDir": "/srv/project"
+        "workingDir": "/srv/project",
+        "sandbox": { "mode": "docker", "image": "node:20-slim", "network": "none" }
       },
       "groupMention": true,
       "routes": [
@@ -100,6 +101,7 @@
       ]
     }
   ],
+  "i18n": { "locale": "zh" },
   "cron": [
     {
       "name": "standup",
@@ -116,6 +118,17 @@
       "steps": [
         { "agent": "helper", "prompt": "把 {{input}} 翻译成英文" },
         { "agent": "coder", "prompt": "润色这段译文，只输出最终版本：{{prev}}" }
+      ]
+    }
+  ],
+  "forms": [
+    {
+      "name": "bug",
+      "desc": "报 bug：填完提交，机器人会按内容处理",
+      "fields": [
+        { "name": "title", "label": "标题", "type": "input", "placeholder": "一句话描述", "required": true },
+        { "name": "detail", "label": "详情", "type": "textarea" },
+        { "name": "sev", "label": "严重程度", "type": "select", "options": ["低", "中", "高"] }
       ]
     }
   ]

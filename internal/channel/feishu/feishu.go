@@ -51,6 +51,7 @@ type Feishu struct {
 	seen         *dedup.Store
 	client       *http.Client
 	feedbackHook func(kind, operator, msgID string)
+	formHook     func(form, chatID, operator string, values map[string]string)
 
 	mu        sync.Mutex
 	healthy   bool
@@ -99,7 +100,12 @@ func (f *Feishu) Name() string {
 }
 
 // SetName gives the instance its config name (multi-account support).
-func (f *Feishu) SetName(n string) { f.name = n }
+func (f *Feishu) SetName(n string) {
+	f.name = n
+	// per-instance dedup file: two accounts of one platform must not
+	// share a seen-store (they would swallow each other's messages)
+	f.seen = dedup.New(filepath.Join(f.opts.DataDir, n+"-seen.json"), 8*time.Hour, 5000)
+}
 
 func (f *Feishu) Healthy() bool {
 	f.mu.Lock()
@@ -511,12 +517,38 @@ func (s *Sender) Replace(ctx context.Context, msgID, text string) error {
 	return s.f.api.patchMessage(ctx, msgID, cardContent("", text))
 }
 
-// handleCardAction answers 👍/👎 button presses with a toast and fans
-// the feedback out to the installed hook (usage log).
+// handleCardAction answers 👍/👎 button presses and form submissions
+// with a toast, fanning the event out to the installed hook.
 func (f *Feishu) handleCardAction(e *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
 	resp := &larkcallback.CardActionTriggerResponse{}
 	if e == nil || e.Event == nil || e.Event.Action == nil {
 		return resp, nil
+	}
+	// form submission: inputs arrive in Action.FormValue, tagged with
+	// the submit button's chatmux_form field
+	if fv, _ := e.Event.Action.FormValue["chatmux_form"].(string); fv != "" {
+		operator, chatID := "", ""
+		if e.Event.Operator != nil {
+			operator = e.Event.Operator.OpenID
+		}
+		if e.Event.Context != nil {
+			chatID = e.Event.Context.OpenChatID
+		}
+		values := map[string]string{}
+		for k, v := range e.Event.Action.FormValue {
+			if k == "chatmux_form" {
+				continue
+			}
+			if s, ok := v.(string); ok {
+				values[k] = s
+			}
+		}
+		if f.formHook != nil {
+			go f.formHook(fv, chatID, operator, values)
+		}
+		return &larkcallback.CardActionTriggerResponse{
+			Toast: &larkcallback.Toast{Type: "success", Content: "已提交 ✓"},
+		}, nil
 	}
 	v, _ := e.Event.Action.Value["chatmux_feedback"].(string)
 	if v == "" {
@@ -543,6 +575,18 @@ func (f *Feishu) handleCardAction(e *larkcallback.CardActionTriggerEvent) (*lark
 
 // SetFeedbackHook installs the callback fired on 👍/👎 presses.
 func (f *Feishu) SetFeedbackHook(fn func(kind, operator, msgID string)) { f.feedbackHook = fn }
+
+// SetFormHandler installs the callback fired when a form card is
+// submitted (form name, originating chat, submitting user, field values).
+func (f *Feishu) SetFormHandler(fn func(form, chatID, operator string, values map[string]string)) {
+	f.formHook = fn
+}
+
+// SendForm posts an interactive form card into the sender's chat.
+func (s *Sender) SendForm(ctx context.Context, formName string, fields []channel.FormField) error {
+	_, err := s.f.api.sendMessage(ctx, "chat_id", s.chatID, "interactive", formCard(formName, "", fields), "")
+	return err
+}
 
 func (s *Sender) React(ctx context.Context, msgID, emoji string) error {
 	return s.f.api.addReaction(ctx, msgID, emoji)
