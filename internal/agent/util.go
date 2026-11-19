@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+
+	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
 
 func hashOf(s string) string {
@@ -34,4 +36,23 @@ func saveFile(path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// maxHistoryChars bounds the history replayed to the model each turn: pasted
+// documents can make even a handful of turns exceed the model's context, and
+// the per-pair count cap alone doesn't prevent that. Oldest exchanges go first.
+const maxHistoryChars = 80_000
+
+// trimToBudget drops the oldest messages until the total content size fits
+// the budget, always keeping at least one user/assistant exchange.
+func trimToBudget(hist []provider.Msg, budget int) []provider.Msg {
+	total := 0
+	for _, m := range hist {
+		total += len(m.Content)
+	}
+	for total > budget && len(hist) > 2 {
+		total -= len(hist[0].Content)
+		hist = hist[1:]
+	}
+	return hist
 }

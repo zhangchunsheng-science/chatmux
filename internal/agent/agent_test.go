@@ -695,3 +695,31 @@ func TestQueuedNudgeOnce(t *testing.T) {
 	}
 	t.Fatal("drained follow-ups did not relaunch a turn")
 }
+
+func TestTrimToBudget(t *testing.T) {
+	small := []provider.Msg{
+		{Role: provider.User, Content: "hi"},
+		{Role: provider.Assistant, Content: "hello"},
+	}
+	if got := trimToBudget(small, 1000); len(got) != 2 {
+		t.Fatalf("small history must pass through, got %d", len(got))
+	}
+	huge := []provider.Msg{
+		{Role: provider.User, Content: strings.Repeat("a", 90_000)},
+		{Role: provider.Assistant, Content: strings.Repeat("b", 90_000)},
+		{Role: provider.User, Content: "问题"},
+		{Role: provider.Assistant, Content: "回答"},
+	}
+	got := trimToBudget(huge, 80_000)
+	if len(got) != 2 || got[0].Content != "问题" {
+		t.Fatalf("oversized pairs must drop oldest first, kept %+v", len(got))
+	}
+	// all oversized: still keeps the newest exchange
+	big := []provider.Msg{
+		{Role: provider.User, Content: strings.Repeat("x", 60_000)},
+		{Role: provider.Assistant, Content: strings.Repeat("y", 60_000)},
+	}
+	if got := trimToBudget(big, 80_000); len(got) != 2 {
+		t.Fatalf("must always keep one exchange, got %d", len(got))
+	}
+}
