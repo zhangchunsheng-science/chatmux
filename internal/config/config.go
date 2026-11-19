@@ -40,6 +40,15 @@ type Config struct {
 	Oncall *OncallConfig `json:"oncall,omitempty"`
 	// GroupWelcome overrides the bot_added greeting text (i18n default).
 	GroupWelcome string `json:"groupWelcome,omitempty"`
+	// Meeting routes VC meeting lifecycle announcements to a chat.
+	Meeting *MeetingConfig `json:"meeting,omitempty"`
+}
+
+// MeetingConfig is where meeting events (feishu VC subscription) are
+// announced: Channel is the channel instance name, ChatID the target chat.
+type MeetingConfig struct {
+	Channel string `json:"channel,omitempty"`
+	ChatID  string `json:"chatId,omitempty"`
 }
 
 // OncallConfig is a duty rotation: members cycle daily or weekly from

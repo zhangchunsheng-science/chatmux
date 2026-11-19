@@ -151,5 +151,6 @@
     "channel": "feishu",
     "chatId": "oc_xxxx"
   },
-  "groupWelcome": "👋 你好，我是 chatmux。群里 @我 即可对话，/help 看命令。"
+  "groupWelcome": "👋 你好，我是 chatmux。群里 @我 即可对话，/help 看命令。",
+  "meeting": { "channel": "feishu", "chatId": "oc_xxxx" }
 }

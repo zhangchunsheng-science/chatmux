@@ -234,6 +234,20 @@ Telegram 音频文件均支持。
 首次只记基线不触发；之后每次变更产出 +/- 行级差异摘录（上限可配长度，
 LCS 行 diff）注入 `{{diff}}`，其余占位符 `{{name}}` `{{path}}`。
 
+## 会议代理（飞书 VC）
+
+在飞书开放平台订阅视频会议事件（vc.bot.meeting_invited_v1 /
+meeting_started_v1 / meeting_ended_v1、vc.meeting.recording_ready_v1），
+chatmux 把它们映射为 meeting_* 事件：
+
+```json
+"meeting": { "channel": "feishu", "chatId": "oc_xxx" }
+```
+
+被邀请入会、会议开始/结束、录制就绪（含时长与链接）都会通知到该聊天，
+并记 usage（mode meeting:*）。如实边界：不自动入会、不拉音频流、不转写
+——那需要桌面端 SDK 与真凭据；录制就绪通知的是回放链接。
+
 ## 值班（oncall）
 
 ```json
@@ -344,6 +358,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.8（对齐循环第 18 轮）：会议代理（飞书 VC）——订阅 vc.bot.meeting_*
+与 vc.meeting.recording_ready_v1 事件，会议被邀/开始/结束/录制就绪映射为
+meeting_* 合成事件，按 meeting.channel+chatId 配置转发通知到指定聊天并记
+usage。如实边界：不含自动入会、音频拉流与转写（需真机 SDK 与凭据），
+录制就绪只通知链接；被邀入会明确提示"仅通知"。
 
 v0.5.7（对齐循环第 17 轮）：话题群进阶盘点收口（飞书/Slack/Discord 线程
 锚点与落回均已就位，v0.5.6 补齐 Telegram 论坛话题，套件对齐完成）+

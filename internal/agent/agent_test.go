@@ -495,3 +495,36 @@ func (c *stubChannel) Start(ctx context.Context, out chan<- channel.Message) err
 }
 func (c *stubChannel) SenderFor(channel.Message) (channel.Sender, error) { return c.sender, nil }
 func (c *stubChannel) Healthy() bool                                     { return true }
+
+func TestMeetingEventAnnounce(t *testing.T) {
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent: "default",
+		Meeting:      &config.MeetingConfig{Channel: "feishu", ChatID: "ops"},
+	}
+	rt := NewRuntime(cfg, provider.NewRegistry(), map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+
+	rt.Handle(context.Background(), channel.Message{
+		Channel: "feishu", ChatID: "mtg1", ChatType: "group",
+		Event: "meeting_started", UserName: "event:meeting_started",
+		Text: "📞 会议开始：周会",
+	})
+	waitContains(t, s, "会议开始：周会")
+
+	// no meeting config → usage-only, no send
+	rt2 := NewRuntime(&config.Config{
+		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent: "default",
+	}, provider.NewRegistry(), map[string]channel.Channel{})
+	s2 := &fakeSender{}
+	rt2.chans["feishu"] = &stubChannel{sender: s2}
+	rt2.Handle(context.Background(), channel.Message{
+		Channel: "feishu", ChatID: "mtg1", Event: "meeting_recording",
+		Text: "🎬 会议录制已就绪：周会",
+	})
+	if n := len(s2.sent); n != 0 {
+		t.Fatalf("without meeting config should not send, got %d", n)
+	}
+}

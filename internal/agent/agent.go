@@ -111,9 +111,14 @@ func (r *Runtime) Sessions() *session.Store { return r.sessions }
 func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 	key := session.Key{Channel: msg.Channel, ChatID: msg.ChatID, ThreadID: msg.ThreadID}
 
-	// membership events (bot added/removed): greet or log, no model turn
+	// membership events (bot added/removed): greet or log, no model turn;
+	// meeting_* events: announce to the configured meeting chat
 	if msg.Event != "" {
-		r.handleMemberEvent(msg)
+		if strings.HasPrefix(msg.Event, "meeting_") {
+			r.handleMeetingEvent(msg)
+		} else {
+			r.handleMemberEvent(msg)
+		}
 		return
 	}
 

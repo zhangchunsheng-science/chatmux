@@ -25,6 +25,7 @@ import (
 	larkdispatch "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	larkvc "github.com/larksuite/oapi-sdk-go/v3/service/vc/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
@@ -167,6 +168,38 @@ func (f *Feishu) Start(ctx context.Context, out chan<- channel.Message) error {
 				f.pumpMemberEvent(ctx, e.EventV2Base, deref(e.Event.ChatId), "bot_removed")
 			}
 			return nil
+		}).
+		// VC meeting lifecycle (需要事件订阅 vc.bot.* / vc.meeting.*)
+		OnP2BotMeetingInvitedV1(func(ctx context.Context, e *larkvc.P2BotMeetingInvitedV1) error {
+			if e != nil && e.Event != nil {
+				id, topic := agentMeeting(e.Event.Meeting)
+				f.pumpMeetingEvent(ctx, e.EventV2Base, meetingNote{kind: "meeting_invited", id: id, topic: topic})
+			}
+			return nil
+		}).
+		OnP2BotMeetingStartedV1(func(ctx context.Context, e *larkvc.P2BotMeetingStartedV1) error {
+			if e != nil && e.Event != nil {
+				id, topic := agentMeeting(e.Event.Meeting)
+				f.pumpMeetingEvent(ctx, e.EventV2Base, meetingNote{kind: "meeting_started", id: id, topic: topic})
+			}
+			return nil
+		}).
+		OnP2BotMeetingEndedV1(func(ctx context.Context, e *larkvc.P2BotMeetingEndedV1) error {
+			if e != nil && e.Event != nil {
+				id, topic := agentMeeting(e.Event.Meeting)
+				f.pumpMeetingEvent(ctx, e.EventV2Base, meetingNote{kind: "meeting_ended", id: id, topic: topic})
+			}
+			return nil
+		}).
+		OnP2MeetingRecordingReadyV1(func(ctx context.Context, e *larkvc.P2MeetingRecordingReadyV1) error {
+			if e != nil && e.Event != nil {
+				id, topic := vcMeeting(e.Event.Meeting)
+				f.pumpMeetingEvent(ctx, e.EventV2Base, meetingNote{
+					kind: "meeting_recording", id: id, topic: topic,
+					url: deref(e.Event.Url), duration: deref(e.Event.Duration),
+				})
+			}
+			return nil
 		})
 
 	wsClient := larkws.NewClient(f.opts.AppID, f.opts.AppSecret,
@@ -191,6 +224,82 @@ func (f *Feishu) pumpMemberEvent(ctx context.Context, base *larkevent.EventV2Bas
 	msg := channel.Message{
 		Channel: f.name, ChatID: chatID, ChatType: "group",
 		UserName: "event:" + kind, Event: kind, Timestamp: time.Now(),
+	}
+	f.mu.Lock()
+	pump := f.pump
+	f.mu.Unlock()
+	if pump != nil {
+		select {
+		case pump <- msg:
+		case <-ctx.Done():
+		case <-time.After(30 * time.Second):
+		}
+	}
+}
+
+// meetingNote is the distilled VC event the runtime will announce.
+type meetingNote struct {
+	kind      string // meeting_invited | meeting_started | meeting_ended | meeting_recording
+	id, topic string
+	url       string // recording link (recording_ready only)
+	duration  string // msec string
+}
+
+func agentMeeting(m *larkvc.MeetingAgentEventMeeting) (id, topic string) {
+	if m == nil {
+		return "", ""
+	}
+	return deref(m.Id), deref(m.Topic)
+}
+
+func vcMeeting(m *larkvc.MeetingEventMeeting) (id, topic string) {
+	if m == nil {
+		return "", ""
+	}
+	return deref(m.Id), deref(m.Topic)
+}
+
+// formatMeeting renders the announcement text (zh, operational notice).
+func formatMeeting(n meetingNote) string {
+	topic := n.topic
+	if topic == "" {
+		topic = "未命名会议"
+	}
+	switch n.kind {
+	case "meeting_invited":
+		return "📞 机器人被邀请加入会议：" + topic + "（未配置自动入会，仅通知）"
+	case "meeting_started":
+		return "📞 会议开始：" + topic
+	case "meeting_ended":
+		return "📞 会议结束：" + topic
+	case "meeting_recording":
+		mins := ""
+		if ms, err := strconv.Atoi(n.duration); err == nil && ms > 0 {
+			mins = "（时长 " + strconv.Itoa(ms/60000) + " 分钟）"
+		}
+		s := "🎬 会议录制已就绪" + mins + "：" + topic
+		if n.url != "" {
+			s += "\n" + n.url
+		}
+		return s
+	}
+	return ""
+}
+
+// pumpMeetingEvent turns VC meeting lifecycle events into synthetic
+// messages: the runtime announces them to the configured meeting chat.
+func (f *Feishu) pumpMeetingEvent(ctx context.Context, base *larkevent.EventV2Base, n meetingNote) {
+	eventID := ""
+	if base != nil && base.Header != nil {
+		eventID = base.Header.EventID
+	}
+	if !f.seen.Claim("meeting|" + n.kind + "|" + eventID) {
+		return
+	}
+	msg := channel.Message{
+		Channel: f.name, ChatID: n.id, ChatType: "group",
+		UserName: "event:" + n.kind, Event: n.kind,
+		Text: formatMeeting(n), Timestamp: time.Now(),
 	}
 	f.mu.Lock()
 	pump := f.pump
