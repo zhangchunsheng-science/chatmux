@@ -26,13 +26,20 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/usage"
 )
 
+// cliRunner abstracts the CLI agent runner so tests can fake CLI turns.
+type cliRunner interface {
+	Run(ctx context.Context, cfg cliagent.Config, anchor, prompt string) (<-chan cliagent.Event, error)
+	Reset(anchor string)
+	ResumeID(anchor string) string
+}
+
 // Runtime drives all agents.
 type Runtime struct {
 	cfg        *config.Config
 	registry   *provider.Registry
 	sessions   *session.Store
 	chans      map[string]channel.Channel
-	cli        *cliagent.Runner
+	cli        cliRunner
 	usage      *usage.Logger
 	dataDir    string
 	skills     map[string]string // skill name → prompt markdown
@@ -101,9 +108,6 @@ func (r *Runtime) SetSkillDescs(m map[string]string) { r.skillDescs = m }
 
 // SetUsageLogger attaches token accounting (optional).
 func (r *Runtime) SetUsageLogger(l *usage.Logger) { r.usage = l }
-
-// CLIRunner exposes the CLI-agent runner (for /new to reset resume ids).
-func (r *Runtime) CLIRunner() *cliagent.Runner { return r.cli }
 
 // Sessions exposes the session store (for /admin/history).
 func (r *Runtime) Sessions() *session.Store { return r.sessions }
@@ -900,6 +904,14 @@ func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg 
 	events, err := r.cli.Run(ctx, cfg, key.String(), prompt)
 	if err != nil {
 		_, _ = t.sender.Send(ctx, r.say("cli.fail", err.Error()), channel.SendOptions{Final: true})
+		// failed CLI launches are usage too, mirroring the API error paths
+		r.usage.Log(usage.Record{
+			Agent: t.agent.Name, Mode: "cli:" + cfg.Type, Model: cfg.Model,
+			Channel: msg.Channel, ChatID: msg.ChatID,
+			DurationMs: time.Since(start).Milliseconds(),
+			Error:      err.Error(),
+		})
+		logTurn(t.agent, cfg.Model, msg, start, 0, 0, 0, err.Error())
 		return
 	}
 
@@ -976,7 +988,9 @@ func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg 
 		Agent: t.agent.Name, Mode: "cli:" + cfg.Type, Model: cfg.Model,
 		Channel: msg.Channel, ChatID: msg.ChatID,
 		OutputChars: len(out), DurationMs: time.Since(start).Milliseconds(),
+		Error: errStr(sawErr),
 	})
+	logTurn(t.agent, cfg.Model, msg, start, 0, 0, len(out), errStr(sawErr))
 	opts := channel.SendOptions{Final: true, ReplyTo: msg.ID, MentionUserIDs: []string{msg.UserID}}
 	if placeholderID != "" {
 		if err := t.sender.Replace(ctx, placeholderID, out); err == nil {

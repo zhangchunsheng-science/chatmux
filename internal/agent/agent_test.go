@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
+	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
@@ -771,4 +772,73 @@ func TestTurnLogged(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("turn log line missing: %q", lb.String())
+}
+
+type fakeCLIRunner struct {
+	runErr error
+	events []cliagent.Event
+}
+
+func (f *fakeCLIRunner) Run(_ context.Context, _ cliagent.Config, _, _ string) (<-chan cliagent.Event, error) {
+	if f.runErr != nil {
+		return nil, f.runErr
+	}
+	ch := make(chan cliagent.Event, len(f.events))
+	for _, e := range f.events {
+		ch <- e
+	}
+	close(ch)
+	return ch, nil
+}
+func (f *fakeCLIRunner) Reset(string)           {}
+func (f *fakeCLIRunner) ResumeID(string) string { return "" }
+
+func TestCliTurnAccounting(t *testing.T) {
+	cases := []struct {
+		name     string
+		runner   *fakeCLIRunner
+		wantErrs int
+	}{
+		{"launch fail", &fakeCLIRunner{runErr: fmt.Errorf("claude: not found")}, 1},
+		{"stream error", &fakeCLIRunner{events: []cliagent.Event{
+			{Type: "text", Text: "部分输出"},
+			{Type: "error", Err: fmt.Errorf("tool crashed")},
+		}}, 1},
+		{"success", &fakeCLIRunner{events: []cliagent.Event{
+			{Type: "text", Text: "完成"},
+			{Type: "result", Text: "最终答案"},
+		}}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := &config.Config{
+				Agents: []config.AgentConfig{{
+					Name: "coder", Provider: "openai",
+					Cli: &cliagent.Config{Type: "claude"},
+				}},
+				DefaultAgent: "coder",
+				DataDir:      dir,
+			}
+			reg := provider.NewRegistry()
+			rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+			rt.cli = tc.runner
+			rt.SetUsageLogger(usage.New(dir))
+			s := &fakeSender{}
+			rt.chans["feishu"] = &stubChannel{sender: s}
+			rt.Handle(context.Background(), channel.Message{
+				Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "跑一下",
+			})
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				aggs, err := usage.Summarize(dir)
+				if err == nil && len(aggs) == 1 && aggs[0].Calls == 1 && aggs[0].Errors == tc.wantErrs {
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			aggs, _ := usage.Summarize(dir)
+			t.Fatalf("usage wrong: %+v", aggs)
+		})
+	}
 }

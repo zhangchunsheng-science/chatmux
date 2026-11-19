@@ -56,3 +56,11 @@ func trimToBudget(hist []provider.Msg, budget int) []provider.Msg {
 	}
 	return hist
 }
+
+// errStr renders a nil-able error for record fields.
+func errStr(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}

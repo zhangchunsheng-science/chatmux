@@ -362,6 +362,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.8（对齐循环第 29 轮）：CLI 轮次记账对齐——runCliTurn 的启动失败路径
+此前不记 usage、流内出错不进 Error 字段、无 turn 日志（API 路径第 22-23 轮
+修过的问题在 CLI 路径的翻版）；三出口全部补齐，并引入 cliRunner 接缝使
+CLI 轮次可测（TestCliTurnAccounting 三态）。
+
 v0.6.7（对齐循环第 28 轮）：turn 级运行日志——daemon.log 此前只有频道事件，
 模型轮次完全不可见；现在每轮（成功/两种失败）各记一行
 `turn status= agent= model= chat= dur_ms= in_tok= out_tok= out_chars= err=`，
