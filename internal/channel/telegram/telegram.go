@@ -117,7 +117,17 @@ func (t *Telegram) Healthy() bool {
 }
 
 type tgUpdate struct {
-	UpdateID      int64 `json:"update_id"`
+	UpdateID int64 `json:"update_id"`
+	// my_chat_member: the bot's own membership in a chat changed
+	MyChatMember *struct {
+		Chat struct {
+			ID   int64  `json:"id"`
+			Type string `json:"type"`
+		} `json:"chat"`
+		NewChatMember *struct {
+			Status string `json:"status"` // member | administrator | kicked | left
+		} `json:"new_chat_member"`
+	} `json:"my_chat_member"`
 	CallbackQuery *struct {
 		ID   string `json:"id"`
 		From *struct {
@@ -199,7 +209,7 @@ func (t *Telegram) Start(ctx context.Context, out chan<- channel.Message) error 
 			OK     bool       `json:"ok"`
 			Result []tgUpdate `json:"result"`
 		}
-		body := map[string]any{"timeout": 50, "allowed_updates": []string{"message", "callback_query"}}
+		body := map[string]any{"timeout": 50, "allowed_updates": []string{"message", "callback_query", "my_chat_member"}}
 		t.mu.Lock()
 		if t.offset != 0 {
 			body["offset"] = t.offset
@@ -224,6 +234,27 @@ func (t *Telegram) Start(ctx context.Context, out chan<- channel.Message) error 
 			t.mu.Unlock()
 			if u.CallbackQuery != nil {
 				t.handleCallback(u.CallbackQuery)
+				continue
+			}
+			if u.MyChatMember != nil && u.MyChatMember.NewChatMember != nil {
+				kind := ""
+				switch u.MyChatMember.NewChatMember.Status {
+				case "kicked", "left":
+					kind = "bot_removed"
+				case "member", "administrator", "restricted":
+					kind = "bot_added"
+				}
+				if kind != "" && u.MyChatMember.Chat.ID != 0 && u.MyChatMember.Chat.Type != "private" {
+					select {
+					case out <- channel.Message{
+						Channel: t.name, ChatID: strconv.FormatInt(u.MyChatMember.Chat.ID, 10),
+						ChatType: "group", Event: kind,
+						UserName: "event:" + kind, Timestamp: time.Now(),
+					}:
+					case <-ctx.Done():
+						return nil
+					}
+				}
 				continue
 			}
 			if msg, ok := t.toMessage(u); ok {

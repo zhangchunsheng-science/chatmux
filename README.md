@@ -162,9 +162,10 @@ system 提示词即可把它当"问人工具"用。每个聊天同时只有一�
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
 
-**群事件**：机器人被拉进飞书群（im.chat.member.bot.added）自动发欢迎语
-（配置 `groupWelcome` 可覆盖默认文案，不配置则用 i18n 默认）；被移出群
-只记 usage 事件不打扰。
+**群事件**：机器人被拉进飞书群（im.chat.member.bot.added）或 Telegram 群
+（my_chat_member → member/administrator）自动发欢迎语（配置
+`groupWelcome` 可覆盖默认文案，不配置则用 i18n 默认）；被移出群（deleted /
+kicked / left）只记 usage 事件不打扰。
 
 ## 引用上下文
 
@@ -320,6 +321,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.2（对齐循环第 12 轮）：Telegram 群事件对齐——getUpdates 增订
+my_chat_member，进群（member/administrator/restricted）发欢迎语，
+出群（kicked/left）静默记录，复用 v0.5.1 的 Event 机制。
 
 v0.5.1（对齐循环第 11 轮）：群套件起步——飞书机器人进群事件
 （im.chat.member.bot.added）自动欢迎语（groupWelcome 可覆盖），
