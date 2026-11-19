@@ -19,6 +19,7 @@ import (
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	dingclient "github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/event"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/dedup"
@@ -28,6 +29,7 @@ type Options struct {
 	ClientID     string   `json:"clientId"`     // AppKey
 	ClientSecret string   `json:"clientSecret"` // AppSecret
 	RobotCode    string   `json:"robotCode"`    // optional, defaults from message
+	BotUserID    string   `json:"botUserId"`    // robot's own userId, for group-event matching
 	APIBase      string   `json:"apiBase"`      // default https://api.dingtalk.com
 	DataDir      string   `json:"dataDir"`
 	AllowUsers   []string `json:"allowUsers"` // staffIds
@@ -41,6 +43,10 @@ type DingTalk struct {
 
 	mu      sync.Mutex
 	healthy bool
+
+	tokMu  sync.Mutex
+	tok    string
+	tokExp time.Time // cached access-token expiry
 }
 
 func New(raw json.RawMessage) (channel.Channel, error) {
@@ -103,6 +109,21 @@ func (d *DingTalk) Start(ctx context.Context, out chan<- channel.Message) error 
 		}
 		return nil, nil // reply async via sessionWebhook, keeps the frame clean
 	})
+	// group events (chat_add_member / chat_remove_member / chat_disband):
+	// whatever the app subscribed to in the DingTalk console lands here
+	onEvent := func(c context.Context, h *event.EventHeader, data []byte) (event.EventProcessStatusType, error) {
+		msg, ok := d.handleEvent(h, data)
+		if !ok {
+			return event.EventProcessStatusKSuccess, nil
+		}
+		select {
+		case out <- msg:
+		case <-c.Done():
+		case <-time.After(10 * time.Second):
+		}
+		return event.EventProcessStatusKSuccess, nil
+	}
+	ws.RegisterAllEventRouter(event.NewDefaultEventFrameHandler(onEvent).OnEventReceived)
 	d.mu.Lock()
 	d.healthy = true
 	d.mu.Unlock()
@@ -159,6 +180,9 @@ type Sender struct {
 }
 
 func (d *DingTalk) SenderFor(msg channel.Message) (channel.Sender, error) {
+	if t, ok := msg.Raw.(*ProactiveTarget); ok {
+		return &proactiveSender{d: d, t: t}, nil
+	}
 	raw, ok := msg.Raw.(*chatbot.BotCallbackDataModel)
 	if !ok || raw.SessionWebhook == "" {
 		return nil, fmt.Errorf("dingtalk: no sessionWebhook for chat %s", msg.ChatID)
@@ -215,6 +239,11 @@ func (d *DingTalk) post(ctx context.Context, url string, body any, out any) erro
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	return d.doReq(req, out)
+}
+
+// doReq executes an already-built request and decodes the JSON reply.
+func (d *DingTalk) doReq(req *http.Request, out any) error {
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return err
@@ -222,7 +251,7 @@ func (d *DingTalk) post(ctx context.Context, url string, body any, out any) erro
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("dingtalk post: %s %s", resp.Status, truncate(string(rb), 300))
+		return fmt.Errorf("dingtalk post %s: %s %s", req.URL.Path, resp.Status, truncate(string(rb), 300))
 	}
 	if out != nil {
 		return json.Unmarshal(rb, out)

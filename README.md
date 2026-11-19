@@ -162,10 +162,12 @@ system 提示词即可把它当"问人工具"用。每个聊天同时只有一�
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
 
-**群事件**：机器人被拉进飞书群（im.chat.member.bot.added）或 Telegram 群
-（my_chat_member → member/administrator）自动发欢迎语（配置
-`groupWelcome` 可覆盖默认文案，不配置则用 i18n 默认）；被移出群（deleted /
-kicked / left）只记 usage 事件不打扰。
+**群事件**：机器人被拉进飞书群（im.chat.member.bot.added）、Telegram 群
+（my_chat_member → member/administrator）或钉钉群（chat_add_member 且成员
+列表含 `robotCode`/`botUserId`）自动发欢迎语（配置 `groupWelcome` 可覆盖
+默认文案，不配置则用 i18n 默认；钉钉欢迎走主动消息 API，需配 robotCode）；
+被移出群（deleted / kicked / left / chat_remove_member）只记 usage 事件
+不打扰。
 
 ## 引用上下文
 
@@ -306,7 +308,7 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 | 平台 | 传输 | 前置条件 | 流式编辑 |
 |---|---|---|---|
 | 飞书 | WebSocket 长连接（默认）或 webhook | 企业自建应用 + 机器人能力 + `im.message.receive_v1` 订阅 + 长连接模式 | ✅ 卡片 PATCH |
-| 钉钉 | Stream Mode（官方 SDK） | 企业内部机器人 + Stream 模式开启 | ❌（sessionWebhook 仅整条发送） |
+| 钉钉 | Stream Mode（官方 SDK） | 企业内部机器人 + Stream 模式开启；群事件需在开放平台订阅 chat_add_member / chat_remove_member / chat_disband，并配 `robotCode`（或 `botUserId`）以识别机器人自身 | ❌（sessionWebhook 仅整条发送） |
 | 企业微信 | HTTP 回调（需公网可达 URL） | 自建应用 + 接收消息回调配置；AES 加解密按官方规范实现 | ❌ |
 | Telegram | 长轮询（无需公网） | @BotFather token | ✅ editMessageText |
 | Slack | Socket Mode（无需公网） | xoxb + xapp token，订阅 message/app_mention 事件 | ✅ chat.update |
@@ -323,6 +325,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.4（对齐循环第 14 轮）：钉钉群事件对齐——Stream Mode 增订群会话事件
+（chat_add/remove_member、chat_disband），机器人进出群按 robotCode /
+botUserId 严格匹配（配不上则按普通成员事件记 usage），进群欢迎走
+/v1.0/robot/groupMessages/send 主动消息（access_token 缓存至过期前 5 分钟）；
+未配 robotCode 时欢迎明确报错而不是静默失败。
 
 v0.5.3（对齐循环第 13 轮）：技能包升级——支持 Claude 式 `<name>/SKILL.md`
 目录技能（目录内可放辅助文件），frontmatter `description:` 自动进 /skills

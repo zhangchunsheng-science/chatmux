@@ -25,6 +25,8 @@
       "options": {
         "clientId": "dingxxxx",
         "clientSecret": "xxxx",
+        "robotCode": "钉钉机器人的 robotCode（群事件识别 + 主动发欢迎必需）",
+        "botUserId": "可选，机器人在群事件里的 userId 形态，用于更精确匹配",
         "allowUsers": []
       }
     },
