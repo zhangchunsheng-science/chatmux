@@ -85,7 +85,14 @@ type tgUpdate struct {
 			Title string `json:"title"`
 		} `json:"chat"`
 		ReplyToMessage *struct {
-			MessageID int64 `json:"message_id"`
+			MessageID int64  `json:"message_id"`
+			Text      string `json:"text"`
+			Caption   string `json:"caption"`
+			From      *struct {
+				ID        int64  `json:"id"`
+				Username  string `json:"username"`
+				FirstName string `json:"first_name"`
+			} `json:"from"`
 		} `json:"reply_to_message"`
 		Text     string `json:"text"`
 		Caption  string `json:"caption"`
@@ -97,6 +104,13 @@ type tgUpdate struct {
 		Photo []struct {
 			FileID string `json:"file_id"`
 		} `json:"photo"`
+		Voice *struct {
+			FileID string `json:"file_id"`
+		} `json:"voice"`
+		Audio *struct {
+			FileID   string `json:"file_id"`
+			FileName string `json:"file_name"`
+		} `json:"audio"`
 		Document *struct {
 			FileID   string `json:"file_id"`
 			FileName string `json:"file_name"`
@@ -192,6 +206,20 @@ func (t *Telegram) toMessage(u tgUpdate) (channel.Message, bool) {
 	}
 	if m.ReplyToMessage != nil {
 		msg.ThreadID = strconv.FormatInt(m.ReplyToMessage.MessageID, 10)
+		if qt := firstNonEmptyT(m.ReplyToMessage.Text, m.ReplyToMessage.Caption); qt != "" {
+			q := &channel.Quoted{
+				ID:   strconv.FormatInt(m.ReplyToMessage.MessageID, 10),
+				Text: qt,
+			}
+			if m.ReplyToMessage.From != nil {
+				q.UserID = strconv.FormatInt(m.ReplyToMessage.From.ID, 10)
+				q.UserName = m.ReplyToMessage.From.Username
+				if q.UserName == "" {
+					q.UserName = m.ReplyToMessage.From.FirstName
+				}
+			}
+			msg.Quoted = q
+		}
 	}
 	// mention stripping: entities carry bot_command/mention offsets over
 	// UTF-16 code units — strip leading commands only, keep it simple.
@@ -199,6 +227,16 @@ func (t *Telegram) toMessage(u tgUpdate) (channel.Message, bool) {
 		if e.Type == "bot_command" && e.Offset == 0 {
 			msg.Text = strings.TrimSpace(msg.Text[e.Length:])
 		}
+	}
+	if m.Voice != nil {
+		msg.Attachments = append(msg.Attachments, channel.Attachment{
+			Type: "audio", Name: "voice.ogg", Key: m.Voice.FileID,
+		})
+	}
+	if m.Audio != nil {
+		msg.Attachments = append(msg.Attachments, channel.Attachment{
+			Type: "audio", Name: m.Audio.FileName, Key: m.Audio.FileID,
+		})
 	}
 	if len(m.Photo) > 0 {
 		msg.Attachments = append(msg.Attachments, channel.Attachment{
@@ -217,6 +255,15 @@ func (t *Telegram) toMessage(u tgUpdate) (channel.Message, bool) {
 		})
 	}
 	return msg, true
+}
+
+func firstNonEmptyT(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func displayName(f *struct {

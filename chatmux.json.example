@@ -4,6 +4,8 @@
     "adminToken": "set-a-long-random-string-if-exposed"
   },
   "dataDir": "data",
+  "skillsDir": "skills",
+  "transcribe": { "enabled": true, "model": "whisper-1" },
   "defaultAgent": "helper",
   "channels": [
     {
@@ -105,6 +107,16 @@
       "channel": "feishu",
       "chatId": "oc_xxxx",
       "text": "请总结过去一天的工作进展和今天的计划。"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "translate-polish",
+      "desc": "翻译再润色",
+      "steps": [
+        { "agent": "helper", "prompt": "把 {{input}} 翻译成英文" },
+        { "agent": "coder", "prompt": "润色这段译文，只输出最终版本：{{prev}}" }
+      ]
     }
   ]
 }

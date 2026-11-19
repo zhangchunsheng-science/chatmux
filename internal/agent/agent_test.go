@@ -168,3 +168,130 @@ func TestFirstNonEmpty(t *testing.T) {
 		t.Errorf("empty args should give empty")
 	}
 }
+
+func TestBuildPromptQuote(t *testing.T) {
+	rt, _ := testRuntime()
+	msg := channel.Message{Text: "这个问题怎么看", Quoted: &channel.Quoted{UserName: "老王", Text: "房价要涨了吗"}}
+	got := rt.buildPrompt(msg)
+	if !strings.Contains(got, "[引用 老王 的消息]") || !strings.Contains(got, "房价要涨了吗") || !strings.Contains(got, "这个问题怎么看") {
+		t.Errorf("quote prompt wrong: %q", got)
+	}
+	// no quote → plain text
+	if got := rt.buildPrompt(channel.Message{Text: "hi"}); got != "hi" {
+		t.Errorf("plain prompt wrong: %q", got)
+	}
+	// missing username falls back
+	got = rt.buildPrompt(channel.Message{Text: "x", Quoted: &channel.Quoted{Text: "y"}})
+	if !strings.Contains(got, "引用 某人") {
+		t.Errorf("anon quote wrong: %q", got)
+	}
+}
+
+func TestBgJobLifecycle(t *testing.T) {
+	// runtime with a provider that blocks until cancelled, so the job
+	// stays alive for /jobs and /stop
+	cfg := &config.Config{
+		Agents: []config.AgentConfig{{Name: "helper", Provider: "openai"}},
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&blockingProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+	a := &cfg.Agents[0]
+	s := &fakeSender{}
+	msg := channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "/bg 跑个分析"}
+
+	// /bg registers a job
+	if !rt.dispatchCommand(key, msg, a, s) {
+		t.Fatalf("/bg should be a command")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var found string
+	for time.Now().Before(deadline) {
+		rt.mu.Lock()
+		for id := range rt.jobs {
+			found = id
+		}
+		rt.mu.Unlock()
+		if found != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if found == "" {
+		t.Fatalf("job not registered")
+	}
+	// /jobs lists it
+	s2 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Text: "/jobs", Channel: "feishu"}, a, s2)
+	waitContains(t, s2, found)
+	// /stop <id> stops it
+	s3 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Text: "/stop " + found, Channel: "feishu"}, a, s3)
+	waitContains(t, s3, "已停止后台任务")
+	// stopAll path
+	if rt.stopAllJobs() > 1 {
+		t.Errorf("stopAll after single stop should find ≤1")
+	}
+}
+
+func TestFlowSubstitution(t *testing.T) {
+	// workflow resolution + {{prev}}/{{input}} substitution, with a fake
+	// provider that echoes its prompt.
+	noop := false
+	cfg := &config.Config{
+		Agents: []config.AgentConfig{{Name: "echo", Provider: "openai", Model: "x"}},
+		Workflows: []config.WorkflowConfig{{
+			Name: "two-step",
+			Steps: []config.WorkflowStep{
+				{Agent: "echo", Prompt: "第一步: {{input}}"},
+				{Agent: "echo", Prompt: "第二步基于: {{prev}}"},
+			},
+		}},
+		DefaultAgent: "echo",
+	}
+	_ = noop
+	reg := provider.NewRegistry()
+	reg.Register(&echoProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	ctx := context.Background()
+	out, err := rt.runFlow(ctx, session.Key{Channel: "t", ChatID: "c"}, "two-step", "原始输入")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "第一步: 原始输入") {
+		t.Errorf("step1 output wrong: %q", out)
+	}
+}
+
+// echoProvider streams back the last user prompt verbatim.
+type echoProvider struct{}
+
+func (e *echoProvider) Name() string { return "openai" }
+func (e *echoProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Delta, error) {
+	ch := make(chan provider.Delta, 2)
+	last := ""
+	for _, m := range req.Messages {
+		if m.Role == provider.User {
+			last = m.Content
+		}
+	}
+	go func() {
+		ch <- provider.Delta{Text: last}
+		close(ch)
+	}()
+	return ch, nil
+}
+
+// blockingProvider never emits anything until ctx dies.
+type blockingProvider struct{}
+
+func (b *blockingProvider) Name() string { return "openai" }
+func (b *blockingProvider) Stream(ctx context.Context, _ provider.Request) (<-chan provider.Delta, error) {
+	ch := make(chan provider.Delta)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}

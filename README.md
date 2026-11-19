@@ -69,8 +69,10 @@ cp chatmux.json.example chatmux.json   # 填入你的通道凭据和模型 key
 }
 ```
 
-`type` 支持 `claude` / `codex` / `generic`（generic 需给 `bin`，可选
-`promptArg`/`resumeFlag`）。
+`type` 支持 `claude` / `codex` / `gemini` / `generic`（generic 需给 `bin`，
+可选 `promptArg`/`resumeFlag`；gemini 走 `gemini -p`，无原生 resume）。
+API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider 换
+`baseUrl` 即接。
 
 ## 聊天内命令
 
@@ -78,13 +80,52 @@ cp chatmux.json.example chatmux.json   # 填入你的通道凭据和模型 key
 
 | 命令 | 作用 |
 |---|---|
-| `/stop` | 打断当前处理中的任务（CLI 进程会被杀掉） |
+| `/bg <任务>` | 丢后台跑——会话立即可用，完成后 @你 发回结果 |
+| `/jobs` | 列出后台任务 |
+| `/stop [bg\|任务id]` | 打断前台 / 后台任务 |
 | `/new` | 全新会话（清历史 + 清 CLI resume） |
-| `/status` | 当前会话状态（模式/模型/历史条数） |
+| `/status` | 当前会话状态（模式/模型/历史/后台任务数） |
 | `/model [名称]` | 查看/切换本会话模型 |
 | `/system [提示词]` | 查看/覆盖 system 提示词 |
+| `/skills` · `/skill <名> <指令>` | 列出 / 使用技能 |
+| `/flows` · `/flow <名> <输入>` | 列出 / 后台跑多步工作流 |
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
+
+## 引用上下文
+
+回复别人的消息时，被引内容自动注入模型上下文（`[引用 老王 的消息]…`）。
+飞书（回复消息）、Telegram、Discord、Slack（线程跟帖）均已接；飞书话题群
+内跟帖不算引用，走话题锚点会话。
+
+## 语音转写
+
+```json
+"transcribe": { "enabled": true, "model": "whisper-1", "baseUrl": "https://api.openai.com/v1" }
+```
+
+开启后语音消息自动转文字（OpenAI 兼容 audio/transcriptions，apiKey 缺省用
+OPENAI_API_KEY），以 `[语音]` 段落并入提示词。Telegram voice / 飞书音频 /
+Telegram 音频文件均支持。
+
+## 技能与工作流
+
+**技能**：`skillsDir` 目录下每个 `*.md` 是一个技能（文件名即技能名）。
+`/skill review 请看这段代码` 把技能全文 + 你的指令一起发给 agent。
+
+**工作流**：chatmux.json 定义多步链，`/flow` 后台执行，`{{prev}}` 代上一步
+输出、`{{input}}` 代用户输入，每步可指定不同 agent：
+
+```json
+"workflows": [{
+  "name": "translate-polish",
+  "desc": "翻译再润色",
+  "steps": [
+    { "agent": "translator", "prompt": "把 {{input}} 翻译成英文" },
+    { "agent": "writer", "prompt": "润色这段译文：{{prev}}" }
+  ]
+}]
+```
 
 ## 定时任务
 
@@ -92,16 +133,16 @@ cp chatmux.json.example chatmux.json   # 填入你的通道凭据和模型 key
 "cron": [{ "name": "standup", "schedule": "30 9 * * 1-5", "channel": "feishu", "chatId": "oc_xxxx", "text": "总结昨天进展" }]
 ```
 
-## 运维
+## 网页看板
 
-```bash
-chatmux status                      # 通道健康 + 运行时状态
-chatmux stop                        # 优雅停机
-chatmux send -to feishu:oc_xxxx 文本  # 从服务端直发消息
-```
+浏览器打开 `http://127.0.0.1:8080/`：通道健康、运行时与会话指标、后台任务
+列表、按 agent 的用量与 👍/👎 反馈统计，5 秒自动刷新（adminToken 输入一次
+存本地）。
 
-对应 HTTP 端点 `/admin/status` `/admin/stop` `/admin/send`，用
-`http.adminToken` 保护（建议只要监听非环回就设置）。`/healthz` 供探活。
+## 反馈按钮（飞书）
+
+飞书最终回复以卡片发出，带 👍/👎 按钮；点按即时 toast 回执，结果计入
+usage.jsonl 与看板统计。
 
 ## 各平台接入要点
 
@@ -126,9 +167,10 @@ chatmux send -to feishu:oc_xxxx 文本  # 从服务端直发消息
 
 ## 状态
 
-v0.2：六通道 + 双 provider + **CLI agent（claude/codex/generic）** + slash 命令 +
-群 @ 门控 + cron 定时 + 用量记账 + admin CLI/HTTP + 图片下载管线 + 单测。
-未做（欢迎 PR）：卡片交互按钮、语音转写、多账号、指标面板。
+v0.3：v0.2 全量 + 后台长任务（/bg /jobs /stop 扩展）+ 引用上下文（飞书/TG/
+Discord/Slack）+ 飞书 👍/👎 反馈卡片 + 语音转写（whisper 兼容）+ 网页看板 +
+技能（skillsDir）+ 工作流（{{prev}}/{{input}} 链）+ gemini CLI 预设。
+未做（欢迎 PR）：多平台按钮（目前仅飞书）、卡片表单、指标导出。
 
 ## License
 

@@ -22,6 +22,36 @@ type Config struct {
 	DataDir string `json:"dataDir"`
 	// Cron schedules fire synthetic messages at agents.
 	Cron []CronConfig `json:"cron"`
+	// Transcribe turns voice messages into text (OpenAI-compatible
+	// audio/transcriptions endpoint, e.g. whisper-1).
+	Transcribe *TranscribeConfig `json:"transcribe,omitempty"`
+	// SkillsDir holds skill prompt files (*.md) loadable via /skill.
+	SkillsDir string `json:"skillsDir,omitempty"`
+	// Workflows are multi-step prompt chains runnable via /flow.
+	Workflows []WorkflowConfig `json:"workflows,omitempty"`
+}
+
+// TranscribeConfig configures voice-to-text for audio attachments.
+type TranscribeConfig struct {
+	Enabled bool   `json:"enabled"`
+	Model   string `json:"model"`             // default whisper-1
+	APIKey  string `json:"apiKey,omitempty"`  // defaults to OPENAI_API_KEY
+	BaseURL string `json:"baseUrl,omitempty"` // default https://api.openai.com/v1
+}
+
+// WorkflowConfig is one named multi-step prompt chain.
+type WorkflowConfig struct {
+	Name  string         `json:"name"`
+	Desc  string         `json:"desc,omitempty"`
+	Agent string         `json:"agent,omitempty"` // per-step agent name overrides below
+	Steps []WorkflowStep `json:"steps"`
+}
+
+// WorkflowStep is one prompt in a workflow. {{prev}} substitutes the
+// previous step's output; {{input}} the user's original input.
+type WorkflowStep struct {
+	Agent  string `json:"agent,omitempty"` // agent name; default: chat's agent
+	Prompt string `json:"prompt"`
 }
 
 // ChannelConfig is one IM adapter instance. Type selects the adapter;

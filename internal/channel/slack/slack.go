@@ -248,6 +248,12 @@ func (s *Slack) handleEvent(ctx context.Context, payload json.RawMessage, out ch
 		MentionedMe: mentionedMe,
 		Timestamp:   time.Now(),
 	}
+	// thread reply: quote the thread-root text for context
+	if e.ThreadTS != "" && e.ThreadTS != e.TS {
+		if q, ok := s.threadRoot(e.Channel, e.ThreadTS); ok {
+			msg.Quoted = q
+		}
+	}
 	for _, f := range e.Files {
 		if strings.HasPrefix(f.Filetype, "image") {
 			msg.Attachments = append(msg.Attachments, channel.Attachment{
@@ -391,6 +397,33 @@ func (s *Sender) React(ctx context.Context, msgID, emoji string) error {
 		return fmt.Errorf("slack reactions.add: %s", res.Error)
 	}
 	return nil
+}
+
+// threadRoot fetches a thread's root message as a Quoted context block.
+func (s *Slack) threadRoot(channelID, threadTS string) (*channel.Quoted, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var out struct {
+		OK       bool `json:"ok"`
+		Messages []struct {
+			Ts      string `json:"ts"`
+			Text    string `json:"text"`
+			User    string `json:"user"`
+			SubType string `json:"subtype"`
+		} `json:"messages"`
+	}
+	err := s.api(ctx, "conversations.history", map[string]string{
+		"channel": channelID, "inclusive": "true",
+		"oldest": threadTS, "latest": threadTS, "limit": "1",
+	}, &out)
+	if err != nil || !out.OK || len(out.Messages) == 0 {
+		return nil, false
+	}
+	root := out.Messages[0]
+	if strings.TrimSpace(root.Text) == "" || root.User == "" || root.User == s.botID {
+		return nil, false
+	}
+	return &channel.Quoted{ID: root.Ts, UserID: root.User, Text: expandMentions(root.Text)}, true
 }
 
 func (s *Slack) api(ctx context.Context, method string, body any, out any) error {

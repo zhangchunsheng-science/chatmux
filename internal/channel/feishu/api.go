@@ -165,6 +165,31 @@ func (a *api) download(ctx context.Context, path string) ([]byte, string, error)
 	return b, resp.Header.Get("Content-Type"), nil
 }
 
+// getMessageText fetches one message's body text (for reply quotes).
+func (a *api) getMessageText(ctx context.Context, messageID string) (string, string, error) {
+	var out struct {
+		Items []struct {
+			MsgType string `json:"msg_type"`
+			Body    struct {
+				Content string `json:"content"`
+			} `json:"body"`
+			Sender struct {
+				ID   string `json:"id"`
+				Type string `json:"sender_type"`
+			} `json:"sender"`
+		} `json:"items"`
+	}
+	if err := a.get(ctx, "/open-apis/im/v1/messages/"+messageID, "", &out); err != nil {
+		return "", "", err
+	}
+	if len(out.Items) == 0 {
+		return "", "", fmt.Errorf("feishu: message %s not found", messageID)
+	}
+	it := out.Items[0]
+	text, _ := parseContent(it.MsgType, it.Body.Content)
+	return text, it.Sender.ID, nil
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -277,6 +302,37 @@ func cardContent(title, text string) string {
 			"title":    map[string]string{"tag": "plain_text", "content": title},
 			"template": "blue",
 		}
+	}
+	b, _ := json.Marshal(card)
+	return string(b)
+}
+
+// feedbackCard builds a final-answer card with 👍/👎 feedback buttons.
+// lark_md <at> tags fold the mention into the text.
+func feedbackCard(text string) string {
+	card := map[string]any{
+		"config": map[string]any{"wide_screen_mode": true},
+		"elements": []any{
+			map[string]any{"tag": "markdown", "content": text},
+			map[string]any{
+				"tag": "action",
+				"actions": []any{
+					map[string]any{
+						"tag":   "button",
+						"text":  map[string]string{"tag": "plain_text", "content": "👍"},
+						"type":  "primary",
+						"value": map[string]string{"chatmux_feedback": "up"},
+					},
+					map[string]any{
+						"tag":   "button",
+						"text":  map[string]string{"tag": "plain_text", "content": "👎"},
+						"type":  "danger",
+						"value": map[string]string{"chatmux_feedback": "down"},
+					},
+				},
+			},
+			map[string]any{"tag": "hr"},
+		},
 	}
 	b, _ := json.Marshal(card)
 	return string(b)

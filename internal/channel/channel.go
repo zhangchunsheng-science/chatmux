@@ -22,6 +22,15 @@ type Attachment struct {
 	Size int64
 }
 
+// Quoted is the message an inbound reply quotes, when the platform
+// reports it. Feeds conversational context to the agent.
+type Quoted struct {
+	ID       string
+	UserID   string
+	UserName string
+	Text     string
+}
+
 // Message is the normalized inbound chat message, produced by every
 // channel adapter and consumed by the router/agent runtime.
 type Message struct {
@@ -35,6 +44,7 @@ type Message struct {
 	Text        string   // normalized plain text, mentions stripped
 	MentionedMe bool     // true if the bot was @-mentioned
 	AtUserIDs   []string // user ids @-mentioned in the text (excluding me)
+	Quoted      *Quoted  // message this one replies to, if reported
 	Attachments []Attachment
 	Timestamp   time.Time
 	Raw         any // platform-native event, for adapters/debug only

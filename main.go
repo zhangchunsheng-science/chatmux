@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -205,7 +206,23 @@ func runServer(cfgPath string) int {
 	// ---- runtime ----
 	b := bus.New()
 	rt := agent.NewRuntime(cfg, registry, chans)
-	rt.SetUsageLogger(usage.New(cfg.DataDir))
+	ul := usage.New(cfg.DataDir)
+	rt.SetUsageLogger(ul)
+	rt.SetSkills(loadSkills(cfg.SkillsDir))
+	// feishu 👍/👎 feedback → usage log
+	for _, ch := range chans {
+		if fh, ok := ch.(interface {
+			SetFeedbackHook(func(kind, operator, msgID string))
+		}); ok {
+			fh.SetFeedbackHook(func(kind, operator, msgID string) {
+				log.Printf("feedback %s by %s on %s", kind, operator, msgID)
+				ul.Log(usage.Record{
+					Agent: "feishu:" + msgID, Mode: "feedback:" + kind,
+					Channel: msgID, ChatID: operator,
+				})
+			})
+		}
+	}
 	in := b.Subscribe()
 	go func() {
 		for msg := range in {
@@ -247,6 +264,16 @@ func runServer(cfgPath string) int {
 
 	// ---- admin endpoints ----
 	mountAdmin(&mux, cfg, rt, chans, stop)
+
+	// ---- dashboard ----
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(dashboardHTML))
+	})
 
 	inbound := b.Inbound()
 	for _, ch := range chans {
@@ -328,6 +355,18 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 			stop()
 		}()
 	})
+	mux.HandleFunc("/admin/usage", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		aggs, err := usage.Summarize(cfg.DataDir)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(err.Error()))
+			return
+		}
+		writeJSON(w, aggs)
+	})
 	mux.HandleFunc("/admin/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -368,3 +407,101 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		writeJSON(w, map[string]string{"messageId": id})
 	})
 }
+
+// loadSkills reads *.md prompts from dir into name→body map.
+func loadSkills(dir string) map[string]string {
+	if dir == "" {
+		return nil
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	m := map[string]string{}
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		m[name] = string(b)
+	}
+	if len(m) > 0 {
+		log.Printf("loaded %d skills from %s", len(m), dir)
+	}
+	return m
+}
+
+const dashboardHTML = `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>chatmux 看板</title>
+<style>
+:root { color-scheme: light dark; }
+body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 2rem auto; max-width: 880px; padding: 0 1rem; }
+h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
+table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
+td, th { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); padding: .4rem .6rem; text-align: left; font-size: .9rem; }
+.good { color: #2e9e5b; font-weight: 600; } .bad { color: #d05050; font-weight: 600; }
+#token { width: 14rem; padding: .25rem; }
+.muted { opacity: .6; font-size: .85rem; }
+</style>
+</head>
+<body>
+<h1>chatmux 看板</h1>
+<p class="muted">token: <input id="token" placeholder="adminToken（可空）"> <button onclick="saveToken()">保存</button>
+ · <span id="ts"></span></p>
+<h2>通道</h2><table id="channels"><tr><td colspan="2" class="muted">加载中…</td></tr></table>
+<h2>运行时</h2><table id="runtime"><tr><td colspan="2" class="muted">加载中…</td></tr></table>
+<h2>后台任务</h2><table id="jobs"><tr><td class="muted">无</td></tr></table>
+<h2>用量</h2><table id="usage"><tr><td colspan="6" class="muted">加载中…</td></tr></table>
+<script>
+const $ = id => document.getElementById(id);
+let token = localStorage.getItem("chatmuxAdminToken") || "";
+$("token").value = token;
+function saveToken(){ token = $("token").value; localStorage.setItem("chatmuxAdminToken", token); refresh(); }
+async function get(path){
+  const h = token ? {"X-Admin-Token": token} : {};
+  const r = await fetch(path, {headers: h});
+  if(!r.ok) throw new Error(path + " → " + r.status);
+  return r.json();
+}
+function esc(s){ const d=document.createElement("div"); d.textContent=String(s); return d.innerHTML; }
+async function refresh(){
+  try {
+    const st = await get("/admin/status");
+    let c = "<tr><th>通道</th><th>状态</th></tr>";
+    for(const [n,ok] of Object.entries(st.channels))
+      c += "<tr><td>"+esc(n)+"</td><td class='"+(ok?"good":"bad")+"'>"+(ok?"正常":"异常")+"</td></tr>";
+    $("channels").innerHTML = c;
+    let r = "<tr><th>指标</th><th>值</th></tr>";
+    for(const [k,v] of Object.entries(st.runtime)){
+      if(k==="backgroundJobs") continue;
+      r += "<tr><td>"+esc(k)+"</td><td>"+esc(Array.isArray(v)?v.join(", "):v)+"</td></tr>";
+    }
+    $("runtime").innerHTML = r;
+    let j = "<tr><th>ID</th><th>类型</th><th>描述</th><th>已跑</th></tr>";
+    (st.runtime.backgroundJobs||[]).forEach(x=>{
+      j += "<tr><td>"+esc(x.id)+"</td><td>"+esc(x.flow||"任务")+"</td><td>"+esc(x.desc)+"</td><td>"+x.elapsedSec+"s</td></tr>";
+    });
+    $("jobs").innerHTML = (st.runtime.backgroundJobs||[]).length ? j : "<tr><td class='muted'>无</td></tr>";
+  } catch(e){ $("channels").innerHTML = "<tr><td class='bad'>"+esc(e.message)+"（检查 token）</td></tr>"; }
+  try {
+    const us = await get("/admin/usage");
+    let u = "<tr><th>Agent</th><th>调用</th><th>入tokens</th><th>出tokens</th><th>👍</th><th>👎</th></tr>";
+    (us||[]).forEach(a=>{ u += "<tr><td>"+esc(a.agent)+"</td><td>"+a.calls+"</td><td>"+a.inputTokens+"</td><td>"+a.outputTokens+"</td><td>"+a.feedbackUp+"</td><td>"+a.feedbackDown+"</td></tr>"; });
+    $("usage").innerHTML = (us||[]).length ? u : "<tr><td colspan='6' class='muted'>暂无数据</td></tr>";
+  } catch(e){ $("usage").innerHTML = "<tr><td colspan='6' class='muted'>"+esc(e.message)+"</td></tr>"; }
+  $("ts").textContent = "更新于 " + new Date().toLocaleTimeString();
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
+`

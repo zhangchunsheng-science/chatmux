@@ -102,6 +102,17 @@ func (r *Runner) Run(ctx context.Context, cfg Config, anchor, prompt string) (<-
 		if cfg.Model != "" {
 			args = append(args, "-m", cfg.Model)
 		}
+	case "gemini":
+		// gemini CLI headless: prompt as argv, plain text on stdout.
+		// No native resume; each turn is fresh (skills keep context).
+		if bin == "" {
+			bin = "gemini"
+		}
+		promptViaStdin = false
+		args = []string{"-p", prompt}
+		if cfg.Model != "" {
+			args = append(args, "-m", cfg.Model)
+		}
 	case "generic":
 		if bin == "" {
 			return nil, fmt.Errorf("cliagent: generic runner needs bin")

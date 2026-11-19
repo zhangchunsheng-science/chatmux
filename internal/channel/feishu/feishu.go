@@ -21,6 +21,7 @@ import (
 	"time"
 
 	larkdispatch "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
@@ -44,11 +45,12 @@ type Options struct {
 }
 
 type Feishu struct {
-	name   string // instance name (defaults to "feishu")
-	opts   Options
-	api    *api
-	seen   *dedup.Store
-	client *http.Client
+	name         string // instance name (defaults to "feishu")
+	opts         Options
+	api          *api
+	seen         *dedup.Store
+	client       *http.Client
+	feedbackHook func(kind, operator, msgID string)
 
 	mu        sync.Mutex
 	healthy   bool
@@ -142,6 +144,9 @@ func (f *Feishu) Start(ctx context.Context, out chan<- channel.Message) error {
 				}
 			}
 			return nil
+		}).
+		OnP2CardActionTrigger(func(ctx context.Context, e *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
+			return f.handleCardAction(e)
 		})
 
 	wsClient := larkws.NewClient(f.opts.AppID, f.opts.AppSecret,
@@ -219,6 +224,15 @@ func (f *Feishu) toMessage(e *larkim.P2MessageReceiveV1) (channel.Message, bool)
 		MentionedMe: mentionedMe,
 		Attachments: attachments,
 		Timestamp:   time.Now(),
+	}
+	// reply quote: a real reply (not a topic-group follow-up) carries
+	// parent_id ≠ root; fetch the quoted text for context.
+	if parent := deref(m.ParentId); parent != "" && parent != deref(m.RootId) && parent != thread {
+		qctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if qText, qSender, err := f.api.getMessageText(qctx, parent); err == nil && strings.TrimSpace(qText) != "" {
+			msg.Quoted = &channel.Quoted{ID: parent, UserID: qSender, Text: strings.TrimSpace(qText)}
+		}
+		cancel()
 	}
 	if msg.Text == "" && len(attachments) == 0 {
 		return channel.Message{}, false
@@ -482,9 +496,10 @@ func (f *Feishu) Download(ctx context.Context, att channel.Attachment) ([]byte, 
 
 func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions) (string, error) {
 	if opts.Final {
-		// final answers are plain text with mentions folded in
-		content := textContent(text, opts.MentionUserIDs...)
-		return s.f.api.sendMessage(ctx, "chat_id", s.chatID, "text", content, opts.ReplyTo)
+		// final answers ship as cards with 👍/👎 feedback buttons;
+		// mentions fold into the markdown via lark_md <at> tags
+		content := feedbackCard(withMentions(text, opts.MentionUserIDs...))
+		return s.f.api.sendMessage(ctx, "chat_id", s.chatID, "interactive", content, opts.ReplyTo)
 	}
 	// interim progress goes out as a card so Replace (PATCH) can stream it
 	return s.f.api.sendMessage(ctx, "chat_id", s.chatID, "interactive", cardContent("…", text), opts.ReplyTo)
@@ -495,6 +510,39 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 func (s *Sender) Replace(ctx context.Context, msgID, text string) error {
 	return s.f.api.patchMessage(ctx, msgID, cardContent("", text))
 }
+
+// handleCardAction answers 👍/👎 button presses with a toast and fans
+// the feedback out to the installed hook (usage log).
+func (f *Feishu) handleCardAction(e *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
+	resp := &larkcallback.CardActionTriggerResponse{}
+	if e == nil || e.Event == nil || e.Event.Action == nil {
+		return resp, nil
+	}
+	v, _ := e.Event.Action.Value["chatmux_feedback"].(string)
+	if v == "" {
+		return resp, nil
+	}
+	operator, msgID := "", ""
+	if e.Event.Operator != nil {
+		operator = e.Event.Operator.OpenID
+	}
+	if e.Event.Context != nil {
+		msgID = e.Event.Context.OpenMessageID
+	}
+	if f.feedbackHook != nil {
+		go f.feedbackHook(v, operator, msgID)
+	}
+	toast := "已收到反馈 👌"
+	if v == "down" {
+		toast = "已收到，下次改进 💪"
+	}
+	return &larkcallback.CardActionTriggerResponse{
+		Toast: &larkcallback.Toast{Type: "success", Content: toast},
+	}, nil
+}
+
+// SetFeedbackHook installs the callback fired on 👍/👎 presses.
+func (f *Feishu) SetFeedbackHook(fn func(kind, operator, msgID string)) { f.feedbackHook = fn }
 
 func (s *Sender) React(ctx context.Context, msgID, emoji string) error {
 	return s.f.api.addReaction(ctx, msgID, emoji)

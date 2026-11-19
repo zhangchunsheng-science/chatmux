@@ -8,7 +8,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,9 +32,12 @@ type Runtime struct {
 	cli      *cliagent.Runner
 	usage    *usage.Logger
 	dataDir  string
+	skills   map[string]string // skill name → prompt markdown
 
-	mu    sync.Mutex
-	turns map[session.Key]*turn // in-flight turn per chat
+	mu     sync.Mutex
+	turns  map[session.Key]*turn // in-flight turn per chat
+	jobs   map[string]*bgJob     // background jobs by id (bg-N)
+	jobSeq int
 }
 
 // turn is one in-flight model call for a chat.
@@ -45,6 +50,17 @@ type turn struct {
 	queued  []provider.Msg // follow-ups arrived mid-turn
 }
 
+// bgJob is a detached long-running task: the chat stays usable while it
+// runs; the result is posted back (and @-mentions its requester).
+type bgJob struct {
+	id      string
+	desc    string
+	agent   *config.AgentConfig
+	cancel  context.CancelFunc
+	started time.Time
+	flow    string // non-empty: workflow name instead of a plain prompt
+}
+
 func NewRuntime(cfg *config.Config, registry *provider.Registry, chans map[string]channel.Channel) *Runtime {
 	return &Runtime{
 		cfg:      cfg,
@@ -53,8 +69,13 @@ func NewRuntime(cfg *config.Config, registry *provider.Registry, chans map[strin
 		chans:    chans,
 		cli:      cliagent.NewRunner(),
 		dataDir:  cfg.DataDir,
+		turns:    map[session.Key]*turn{},
+		jobs:     map[string]*bgJob{},
 	}
 }
+
+// SetSkills installs skill prompts (name → markdown body).
+func (r *Runtime) SetSkills(m map[string]string) { r.skills = m }
 
 // SetUsageLogger attaches token accounting (optional).
 func (r *Runtime) SetUsageLogger(l *usage.Logger) { r.usage = l }
@@ -71,10 +92,17 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 	r.mu.Lock()
 	if t, ok := r.turns[key]; ok {
 		r.mu.Unlock()
-		// /stop must cut the running turn even mid-flight
-		if strings.HasPrefix(strings.TrimSpace(msg.Text), "/stop") {
-			t.cancel()
-			return
+		// commands stay usable mid-turn: /stop cuts the running turn,
+		// /jobs //bg //skills etc. answer without queueing
+		if strings.HasPrefix(strings.TrimSpace(msg.Text), "/") {
+			if s, err := r.senderFor(msg); err == nil {
+				if strings.HasPrefix(strings.TrimSpace(msg.Text), "/stop") {
+					t.cancel()
+				}
+				if r.dispatchCommand(key, msg, r.agentFor(msg), s) {
+					return
+				}
+			}
 		}
 		t.queued = append(t.queued, provider.Msg{
 			Role: provider.User, Content: msg.Text, Name: msg.UserName,
@@ -82,7 +110,7 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 		// nudge the user that we saw them (best effort, non-fatal)
 		if s, err := r.senderFor(msg); err == nil {
 			go func() {
-				_, _ = s.Send(context.Background(), "已收到，正在处理上一条；再发 /stop 可打断当前任务。", channel.SendOptions{})
+				_, _ = s.Send(context.Background(), "已收到，正在处理上一条；再发 /stop 可打断当前任务，/bg 可丢后台。", channel.SendOptions{})
 			}()
 		}
 		return
@@ -110,10 +138,15 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 		return
 	}
 
+	r.launchTurn(key, msg, agentCfg, sender)
+}
+
+// launchTurn starts a foreground (chat-serializing) turn.
+func (r *Runtime) launchTurn(key session.Key, msg channel.Message, agentCfg *config.AgentConfig, sender channel.Sender) {
 	r.mu.Lock()
 	if _, busy := r.turns[key]; busy { // raced with another dispatcher
 		r.mu.Unlock()
-		r.Handle(ctx, msg)
+		r.Handle(context.Background(), msg)
 		return
 	}
 	tctx, cancel := context.WithCancel(context.Background())
@@ -122,11 +155,7 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 	r.mu.Unlock()
 
 	go func() {
-		if t.agent.Cli != nil {
-			r.runCliTurn(tctx, key, t, msg)
-		} else {
-			r.runTurn(tctx, key, t, msg)
-		}
+		r.executeTurn(tctx, key, t, msg, "")
 		queued := t.queued
 		t.queued = nil
 		// only remove the turn after runTurn finished, so a follow-up
@@ -159,8 +188,19 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 	}()
 }
 
-// dispatchCommand handles /stop /new /status /model /system /help.
-// Returns true when the message was a command (fully handled).
+// executeTurn runs one model/CLI turn. execKey anchors session history
+// and CLI resume ids (background jobs get their own); resultPrefix is
+// prepended to the final reply (used by /bg completion notices).
+func (r *Runtime) executeTurn(ctx context.Context, execKey session.Key, t *turn, msg channel.Message, resultPrefix string) {
+	if t.agent.Cli != nil {
+		r.runCliTurn(ctx, execKey, t, msg, resultPrefix)
+	} else {
+		r.runTurn(ctx, execKey, t, msg, resultPrefix)
+	}
+}
+
+// dispatchCommand handles the slash command set. Returns true when the
+// message was a command (fully handled).
 func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *config.AgentConfig, sender channel.Sender) bool {
 	text := strings.TrimSpace(msg.Text)
 	if !strings.HasPrefix(text, "/") {
@@ -170,6 +210,14 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 	cmd, arg, _ := strings.Cut(cmd, " ")
 	cmd = strings.ToLower(cmd)
 	arg = strings.TrimSpace(arg)
+	// multi-line bodies ("/bg 第一行\n第二行") keep everything after the
+	// first space, including newlines
+	if i := strings.Index(text, " "); i >= 0 {
+		arg = strings.TrimSpace(text[i+1:])
+	}
+	if a == nil { // no agent routed; only meta commands work
+		a = &config.AgentConfig{Name: "?"}
+	}
 
 	reply := func(s string) {
 		go func() { _, _ = sender.Send(context.Background(), s, channel.SendOptions{Final: true}) }()
@@ -177,15 +225,54 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 
 	switch cmd {
 	case "/stop":
-		r.mu.Lock()
-		t, ok := r.turns[key]
-		r.mu.Unlock()
-		if ok {
-			t.cancel()
-			reply("已请求打断当前任务。")
-		} else {
-			reply("当前没有在处理的任务。")
+		switch {
+		case arg == "" || arg == "fg":
+			r.mu.Lock()
+			t, ok := r.turns[key]
+			r.mu.Unlock()
+			if ok {
+				t.cancel()
+				reply("已请求打断当前任务。")
+			} else {
+				reply("当前没有在处理的前台任务。")
+			}
+		case arg == "bg" || arg == "all":
+			n := r.stopAllJobs()
+			if n > 0 {
+				reply(fmt.Sprintf("已停止 %d 个后台任务。", n))
+			} else {
+				reply("没有在跑的后台任务。")
+			}
+		default:
+			if r.stopJob(arg) {
+				reply("已停止后台任务 " + arg + "。")
+			} else {
+				reply("没有找到后台任务 " + arg + "（/jobs 查看）。")
+			}
 		}
+	case "/bg":
+		if arg == "" {
+			reply("用法: /bg <任务描述> — 丢到后台跑，会话继续可用")
+			break
+		}
+		r.startBgJob(key, msg, a, sender, arg, "")
+	case "/jobs":
+		r.mu.Lock()
+		jobs := make([]*bgJob, 0, len(r.jobs))
+		for _, j := range r.jobs {
+			jobs = append(jobs, j)
+		}
+		r.mu.Unlock()
+		if len(jobs) == 0 {
+			reply("没有在跑的后台任务。")
+			break
+		}
+		lines := []string{"后台任务："}
+		for _, j := range jobs {
+			lines = append(lines, fmt.Sprintf("· %s [%s] %s — 已跑 %s（/stop %s 停止）",
+				j.id, flowTag(j), truncate(j.desc, 40), time.Since(j.started).Round(time.Second), j.id))
+		}
+		reply(strings.Join(lines, "\n"))
 	case "/new":
 		r.sessions.Reset(key)
 		r.cli.Reset(key.String())
@@ -193,6 +280,7 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 	case "/status":
 		r.mu.Lock()
 		_, busy := r.turns[key]
+		jobsN := len(r.jobs)
 		r.mu.Unlock()
 		sess := r.sessions.Get(key)
 		mode := "api"
@@ -208,8 +296,8 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		if busy {
 			status = "处理中"
 		}
-		reply(fmt.Sprintf("chatmux %s · 会话 %s · 模式 %s · 模型 %s · 历史 %d 条",
-			status, shortKey(key), mode, model, r.sessions.Count(key)))
+		reply(fmt.Sprintf("chatmux %s · 会话 %s · 模式 %s · 模型 %s · 历史 %d 条 · 后台任务 %d 个",
+			status, shortKey(key), mode, model, r.sessions.Count(key), jobsN))
 	case "/model":
 		if arg == "" {
 			sess := r.sessions.Get(key)
@@ -228,14 +316,80 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		}
 		r.sessions.Set(key, func(s *session.Session) { s.System = arg })
 		reply("system 提示词已更新。")
+	case "/skills":
+		if len(r.skills) == 0 {
+			reply("没有已安装技能。把 *.md 放到 skillsDir 并重启。")
+			break
+		}
+		names := make([]string, 0, len(r.skills))
+		for n := range r.skills {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		lines := []string{"可用技能（/skill <名> [指令] 使用）："}
+		for _, n := range names {
+			lines = append(lines, "· "+n+" — "+truncate(strings.TrimSpace(r.skills[n]), 50))
+		}
+		reply(strings.Join(lines, "\n"))
+	case "/skill":
+		name, rest, _ := strings.Cut(arg, " ")
+		body, ok := r.skills[name]
+		if !ok {
+			reply("没有技能 " + name + "（/skills 查看）。")
+			break
+		}
+		if strings.TrimSpace(rest) == "" {
+			reply("用法: /skill " + name + " <补充指令>")
+			break
+		}
+		// run as a normal turn with the skill prompt prepended
+		enriched := msg
+		enriched.Text = "【技能 " + name + "】\n" + strings.TrimSpace(body) + "\n\n【用户指令】\n" + rest
+		go r.launchTurn(key, enriched, a, sender)
+	case "/flows":
+		if len(r.cfg.Workflows) == 0 {
+			reply("没有配置工作流。chatmux.json 的 workflows[] 定义多步链。")
+			break
+		}
+		lines := []string{"可用工作流（/flow <名> [输入] 后台执行）："}
+		for _, wf := range r.cfg.Workflows {
+			d := wf.Desc
+			if d == "" {
+				d = fmt.Sprintf("%d 步", len(wf.Steps))
+			}
+			lines = append(lines, "· "+wf.Name+" — "+d)
+		}
+		reply(strings.Join(lines, "\n"))
+	case "/flow":
+		name, rest, _ := strings.Cut(arg, " ")
+		var wf *config.WorkflowConfig
+		for i := range r.cfg.Workflows {
+			if r.cfg.Workflows[i].Name == name {
+				wf = &r.cfg.Workflows[i]
+				break
+			}
+		}
+		if wf == nil {
+			reply("没有工作流 " + name + "（/flows 查看）。")
+			break
+		}
+		if strings.TrimSpace(rest) == "" {
+			reply("用法: /flow " + name + " <输入>")
+			break
+		}
+		r.startBgJob(key, msg, a, sender, rest, name)
 	case "/help":
 		reply(strings.Join([]string{
 			"chatmux 命令：",
-			"/stop — 打断当前处理中的任务",
+			"/stop [bg|任务id] — 打断前台/后台任务",
+			"/bg <任务> — 丢后台跑，会话不被占用",
+			"/jobs — 列出后台任务",
 			"/new — 开启全新会话（清历史/CLI 会话）",
 			"/status — 查看当前会话状态",
 			"/model [名称] — 查看/切换模型",
 			"/system [提示词] — 查看/覆盖 system 提示词",
+			"/skills · /skill <名> <指令> — 使用技能",
+			"/flows · /flow <名> <输入> — 跑多步工作流",
 			"群里默认需要 @机器人 触发。",
 		}, "\n"))
 	default:
@@ -245,7 +399,17 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 	return true
 }
 
-func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg channel.Message) {
+func flowTag(j *bgJob) string {
+	if j.flow != "" {
+		return "工作流:" + j.flow
+	}
+	if j.agent != nil && j.agent.Cli != nil {
+		return "cli:" + j.agent.Cli.Type
+	}
+	return "api"
+}
+
+func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg channel.Message, resultPrefix string) {
 	prov, ok := r.registry.Get(providerName(t.agent))
 	if !ok {
 		_, _ = t.sender.Send(ctx, "模型提供方未配置。", channel.SendOptions{Final: true})
@@ -259,8 +423,11 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 
 	system := firstNonEmpty(sess.System, t.agent.System, defaultSystemPrompt)
 
-	userMsg := provider.Msg{Role: provider.User, Content: msg.Text, Name: msg.UserName}
+	userMsg := provider.Msg{Role: provider.User, Content: r.buildPrompt(msg), Name: msg.UserName}
 	r.attachImages(ctx, msg, &userMsg)
+	if vt := r.transcribeAudio(ctx, msg); vt != "" {
+		userMsg.Content = strings.TrimSpace(userMsg.Content + "\n[语音]\n" + vt)
+	}
 
 	model := firstNonEmpty(sess.Model, t.agent.Model)
 
@@ -289,6 +456,10 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	var inTok, outTok int
 	for d := range stream {
 		if d.Err != nil {
+			if ctx.Err() != nil { // cancelled via /stop
+				r.reportInterrupt(ctx, t, msg, placeholderID, sb.String())
+				return
+			}
 			if placeholderID == "" {
 				_, _ = t.sender.Send(ctx, "模型出错: "+d.Err.Error(), channel.SendOptions{Final: true})
 			} else {
@@ -317,13 +488,13 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 		}
 	}
 
-	out := sb.String()
+	out := resultPrefix + sb.String()
 	if strings.TrimSpace(out) == "" {
 		out = "(空回复)"
 	}
 	r.usage.Log(usage.Record{
 		Agent: t.agent.Name, Mode: "api", Provider: providerName(t.agent), Model: model,
-		Channel: key.Channel, ChatID: key.ChatID,
+		Channel: msg.Channel, ChatID: msg.ChatID,
 		InputTokens: inTok, OutputTokens: outTok, OutputChars: len(out),
 		DurationMs: time.Since(start).Milliseconds(),
 	})
@@ -342,10 +513,75 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	r.finish(key, userMsg, out)
 }
 
+// buildPrompt folds reply-quote context into the user prompt.
+func (r *Runtime) buildPrompt(msg channel.Message) string {
+	if msg.Quoted == nil || strings.TrimSpace(msg.Quoted.Text) == "" {
+		return msg.Text
+	}
+	who := msg.Quoted.UserName
+	if who == "" {
+		who = "某人"
+	}
+	return "[引用 " + who + " 的消息]\n" + truncate(strings.TrimSpace(msg.Quoted.Text), 1000) + "\n---\n" + msg.Text
+}
+
+// transcribeAudio voice-notes an audio attachment into text.
+func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) string {
+	tc := r.cfg.Transcribe
+	if tc == nil || !tc.Enabled {
+		return ""
+	}
+	ch, ok := r.chans[msg.Channel]
+	if !ok {
+		return ""
+	}
+	dl, ok := ch.(channel.AttachmentDownloader)
+	if !ok {
+		return ""
+	}
+	for _, att := range msg.Attachments {
+		if att.Type != "audio" || att.Key == "" {
+			continue
+		}
+		dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		data, mime, err := dl.Download(dctx, att)
+		cancel()
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		p := filepath.Join(r.dataDir, "attachments", hashOf(att.Key)+"."+extOf(mime))
+		if saveFile(p, data) != nil {
+			continue
+		}
+		key := firstNonEmpty(tc.APIKey, os.Getenv("OPENAI_API_KEY"))
+		if key == "" {
+			return ""
+		}
+		tctx, cancel2 := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel2()
+		if txt, err := provider.TranscribeAudio(tctx, nil, p, provider.TranscribeArgs{
+			Model: tc.Model, APIKey: key, BaseURL: tc.BaseURL,
+		}); err == nil {
+			return txt
+		}
+	}
+	return ""
+}
+
+// reportInterrupt posts the [已打断] notice for a cancelled turn.
+func (r *Runtime) reportInterrupt(ctx context.Context, t *turn, msg channel.Message, placeholderID, partial string) {
+	if placeholderID != "" {
+		_ = t.sender.Replace(ctx, placeholderID, partial+"\n\n[已打断]")
+	} else {
+		_, _ = t.sender.Send(ctx, "[已打断]", channel.SendOptions{Final: true})
+	}
+	_ = t.sender.React(ctx, msg.ID, "octagonal_sign")
+}
+
 // runCliTurn drives a headless CLI agent (claude/codex/generic). The CLI
 // owns its conversational memory via resume ids; chatmux streams progress
 // (tool calls + partial text) and posts the final result.
-func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg channel.Message) {
+func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg channel.Message, resultPrefix string) {
 	cfg := *t.agent.Cli
 	if cfg.WorkingDir == "" {
 		cfg.WorkingDir = t.agent.WorkingDir
@@ -355,9 +591,9 @@ func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg 
 		cfg.Model = m
 	}
 
-	prompt := msg.Text
+	prompt := r.buildPrompt(msg)
 	if msg.UserName != "" {
-		prompt = msg.UserName + ":\n" + msg.Text
+		prompt = msg.UserName + ":\n" + prompt
 	}
 
 	_ = t.sender.React(ctx, msg.ID, "eyes")
@@ -426,16 +662,11 @@ func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg 
 	}
 
 	if ctx.Err() != nil { // /stop
-		if placeholderID != "" {
-			_ = t.sender.Replace(ctx, placeholderID, render()+"\n\n[已打断]")
-		} else {
-			_, _ = t.sender.Send(ctx, "[已打断]", channel.SendOptions{Final: true})
-		}
-		_ = t.sender.React(ctx, msg.ID, "octagonal_sign")
+		r.reportInterrupt(ctx, t, msg, placeholderID, render())
 		return
 	}
 
-	out := firstNonEmpty(resultText, strings.Join(texts, "\n\n"))
+	out := resultPrefix + firstNonEmpty(resultText, strings.Join(texts, "\n\n"))
 	if sawErr != nil {
 		out += "\n\n[CLI 出错: " + sawErr.Error() + "]"
 	}
@@ -444,7 +675,7 @@ func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg 
 	}
 	r.usage.Log(usage.Record{
 		Agent: t.agent.Name, Mode: "cli:" + cfg.Type, Model: cfg.Model,
-		Channel: key.Channel, ChatID: key.ChatID,
+		Channel: msg.Channel, ChatID: msg.ChatID,
 		OutputChars: len(out), DurationMs: time.Since(start).Milliseconds(),
 	})
 	opts := channel.SendOptions{Final: true, ReplyTo: msg.ID, MentionUserIDs: []string{msg.UserID}}
@@ -506,11 +737,19 @@ func (r *Runtime) Status() map[string]any {
 	for k := range r.turns {
 		busy = append(busy, shortKey(k))
 	}
+	jobs := []map[string]any{}
+	for _, j := range r.jobs {
+		jobs = append(jobs, map[string]any{
+			"id": j.id, "desc": truncate(j.desc, 80), "flow": j.flow,
+			"elapsedSec": int64(time.Since(j.started).Seconds()),
+		})
+	}
 	r.mu.Unlock()
 	return map[string]any{
-		"sessions":      r.sessions.Len(),
-		"turnsInFlight": len(busy),
-		"busyAnchors":   busy,
+		"sessions":       r.sessions.Len(),
+		"turnsInFlight":  len(busy),
+		"busyAnchors":    busy,
+		"backgroundJobs": jobs,
 	}
 }
 
@@ -558,6 +797,192 @@ func providerName(a *config.AgentConfig) string {
 		return a.Provider
 	}
 	return "openai"
+}
+
+// ---- background jobs ----
+
+// startBgJob launches a detached task (plain prompt or workflow). The
+// chat stays free: the job runs on its own anchor and posts the result
+// back with an @-mention of its requester.
+func (r *Runtime) startBgJob(key session.Key, msg channel.Message, a *config.AgentConfig, sender channel.Sender, task, flowName string) {
+	r.mu.Lock()
+	r.jobSeq++
+	id := fmt.Sprintf("bg-%d", r.jobSeq)
+	jctx, cancel := context.WithCancel(context.Background())
+	job := &bgJob{id: id, desc: task, agent: a, cancel: cancel, started: time.Now(), flow: flowName}
+	r.jobs[id] = job
+	r.mu.Unlock()
+
+	_ = sender.React(context.Background(), msg.ID, "rocket")
+
+	go func() {
+		execKey := session.Key{Channel: key.Channel, ChatID: key.ChatID + "|job" + id}
+		prefix := fmt.Sprintf("✅ 后台任务 %s（%s）完成：\n\n", id, truncate(task, 60))
+		if flowName != "" {
+			out, err := r.runFlow(jctx, execKey, flowName, task)
+			if ctxErr := jctx.Err(); ctxErr != nil {
+				_, _ = sender.Send(context.Background(), fmt.Sprintf("⛔ 后台任务 %s（工作流 %s）已停止。", id, flowName), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
+			} else if err != nil {
+				_, _ = sender.Send(context.Background(), fmt.Sprintf("⚠️ 工作流 %s 失败: %v", flowName, err), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
+			} else {
+				_, _ = sender.Send(context.Background(), fmt.Sprintf("✅ 工作流 %s（%s）完成：\n\n%s", flowName, id, out), channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
+			}
+		} else {
+			t := &turn{cancel: cancel, done: make(chan struct{}), agent: a, sender: sender, started: time.Now()}
+			r.executeTurn(jctx, execKey, t, msg, prefix)
+			cancel()
+			close(t.done)
+		}
+		r.mu.Lock()
+		delete(r.jobs, id)
+		r.mu.Unlock()
+	}()
+
+	go func() {
+		notice := fmt.Sprintf("🚀 后台任务 %s 已启动，会话继续可用；/jobs 查看，/stop %s 停止。", id, id)
+		if flowName != "" {
+			notice = fmt.Sprintf("🚀 工作流 %s 已后台启动（%s）；/jobs 查看，/stop %s 停止。", flowName, id, id)
+		}
+		_, _ = sender.Send(context.Background(), notice, channel.SendOptions{Final: true})
+	}()
+}
+
+func (r *Runtime) stopJob(id string) bool {
+	r.mu.Lock()
+	j, ok := r.jobs[id]
+	r.mu.Unlock()
+	if !ok {
+		return false
+	}
+	j.cancel()
+	return true
+}
+
+func (r *Runtime) stopAllJobs() int {
+	r.mu.Lock()
+	jobs := make([]*bgJob, 0, len(r.jobs))
+	for _, j := range r.jobs {
+		jobs = append(jobs, j)
+	}
+	r.mu.Unlock()
+	for _, j := range jobs {
+		j.cancel()
+	}
+	return len(jobs)
+}
+
+// ---- workflows ----
+
+// runFlow executes a workflow's step chain synchronously, returning the
+// final step output. {{prev}} and {{input}} substitute into prompts.
+func (r *Runtime) runFlow(ctx context.Context, execKey session.Key, flowName, input string) (string, error) {
+	var wf *config.WorkflowConfig
+	for i := range r.cfg.Workflows {
+		if r.cfg.Workflows[i].Name == flowName {
+			wf = &r.cfg.Workflows[i]
+			break
+		}
+	}
+	if wf == nil {
+		return "", fmt.Errorf("workflow %q not found", flowName)
+	}
+	prev := ""
+	var lastErr error
+	for i, st := range wf.Steps {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		prompt := strings.ReplaceAll(st.Prompt, "{{prev}}", prev)
+		prompt = strings.ReplaceAll(prompt, "{{input}}", input)
+		a := r.agentByName(st.Agent)
+		if a == nil {
+			a = r.agentByName(wf.Agent)
+		}
+		if a == nil {
+			a = r.agentByName(r.cfg.DefaultAgent)
+		}
+		if a == nil {
+			return "", fmt.Errorf("step %d: no agent", i+1)
+		}
+		out, err := r.runOnce(ctx, session.Key{Channel: execKey.Channel, ChatID: execKey.ChatID + fmt.Sprintf("|step%d", i)}, a, prompt)
+		if err != nil {
+			lastErr = fmt.Errorf("step %d: %w", i+1, err)
+			break
+		}
+		prev = out
+	}
+	if lastErr != nil {
+		return prev, lastErr
+	}
+	return prev, nil
+}
+
+// runOnce does one non-streaming model call (or single CLI turn) and
+// returns the full text.
+func (r *Runtime) runOnce(ctx context.Context, execKey session.Key, a *config.AgentConfig, prompt string) (string, error) {
+	if a.Cli != nil {
+		cfg := *a.Cli
+		if cfg.WorkingDir == "" {
+			cfg.WorkingDir = a.WorkingDir
+		}
+		if a.Model != "" && cfg.Type != "generic" {
+			cfg.Model = a.Model
+		}
+		events, err := r.cli.Run(ctx, cfg, execKey.String(), prompt)
+		if err != nil {
+			return "", err
+		}
+		var texts []string
+		var result string
+		for ev := range events {
+			switch ev.Type {
+			case "text":
+				texts = append(texts, ev.Text)
+			case "result":
+				result = ev.Text
+			case "error":
+				if ctx.Err() == nil {
+					return "", ev.Err
+				}
+			}
+		}
+		return firstNonEmpty(result, strings.Join(texts, "\n\n")), nil
+	}
+	prov, ok := r.registry.Get(providerName(a))
+	if !ok {
+		return "", fmt.Errorf("provider %s 未配置", providerName(a))
+	}
+	stream, err := prov.Stream(ctx, provider.Request{
+		Model: a.Model, System: firstNonEmpty(a.System, defaultSystemPrompt),
+		Messages:  []provider.Msg{{Role: provider.User, Content: prompt}},
+		MaxTokens: 4096, APIKey: a.APIKey, BaseURL: a.BaseURL,
+	})
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	for d := range stream {
+		if d.Err != nil {
+			if ctx.Err() != nil {
+				return sb.String(), ctx.Err()
+			}
+			return sb.String(), d.Err
+		}
+		sb.WriteString(d.Text)
+	}
+	return sb.String(), nil
+}
+
+func (r *Runtime) agentByName(name string) *config.AgentConfig {
+	if name == "" {
+		return nil
+	}
+	for i := range r.cfg.Agents {
+		if r.cfg.Agents[i].Name == name {
+			return &r.cfg.Agents[i]
+		}
+	}
+	return nil
 }
 
 // mentionAllowed: p2p always; groups require an @ unless the agent

@@ -254,7 +254,13 @@ func (d *Discord) toMessage(data json.RawMessage) (channel.Message, bool) {
 		Content   string `json:"content"`
 		Type      int    `json:"type"`
 		Reference *struct {
-			MessageID string `json:"message_id"`
+			ID      string `json:"id"`
+			Content string `json:"content"`
+			Author  struct {
+				ID       string `json:"id"`
+				Bot      bool   `json:"bot"`
+				Username string `json:"username"`
+			} `json:"author"`
 		} `json:"referenced_message"`
 		Attachments []struct {
 			URL      string `json:"url"`
@@ -293,6 +299,18 @@ func (d *Discord) toMessage(data json.RawMessage) (channel.Message, bool) {
 		Text:        strings.TrimSpace(content),
 		MentionedMe: mentionedMe,
 		Timestamp:   time.Now(),
+	}
+	// reply quote: referenced_message carries the quoted post verbatim
+	if m.Type == 19 && m.Reference != nil { // 19 = REPLY
+		msg.ThreadID = m.Reference.ID
+		if m.Reference.Content != "" && !m.Reference.Author.Bot {
+			msg.Quoted = &channel.Quoted{
+				ID:       m.Reference.ID,
+				UserID:   m.Reference.Author.ID,
+				UserName: m.Reference.Author.Username,
+				Text:     strings.TrimSpace(m.Reference.Content),
+			}
+		}
 	}
 	for _, a := range m.Attachments {
 		kind := "file"

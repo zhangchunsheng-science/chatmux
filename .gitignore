@@ -3,3 +3,4 @@ chatmux.json
 data/
 *.tar.gz
 .DS_Store
+skills/*.md

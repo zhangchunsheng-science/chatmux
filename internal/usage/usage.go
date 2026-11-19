@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,4 +69,73 @@ func (l *Logger) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	_ = l.f.Close()
+}
+
+// Agg is a per-agent usage summary.
+type Agg struct {
+	Agent        string `json:"agent"`
+	Calls        int    `json:"calls"`
+	InputTokens  int64  `json:"inputTokens"`
+	OutputTokens int64  `json:"outputTokens"`
+	OutputChars  int64  `json:"outputChars"`
+	FeedbackUp   int    `json:"feedbackUp"`
+	FeedbackDown int    `json:"feedbackDown"`
+}
+
+// Summarize aggregates usage.jsonl by agent. feedback rows (Mode
+// "feedback:up"/"feedback:down") count into the tally.
+func Summarize(dataDir string) ([]Agg, error) {
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	b, err := os.ReadFile(filepath.Join(dataDir, "usage.jsonl"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	byAgent := map[string]*Agg{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec Record
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		// feedback rows are logged with Agent=<channel>:<msgID>
+		if strings.HasPrefix(rec.Mode, "feedback:") {
+			name := rec.Channel
+			if name == "" {
+				name = rec.Agent
+			}
+			a := byAgent[name]
+			if a == nil {
+				a = &Agg{Agent: name}
+				byAgent[name] = a
+			}
+			if strings.HasSuffix(rec.Mode, "up") {
+				a.FeedbackUp++
+			} else {
+				a.FeedbackDown++
+			}
+			continue
+		}
+		a := byAgent[rec.Agent]
+		if a == nil {
+			a = &Agg{Agent: rec.Agent}
+			byAgent[rec.Agent] = a
+		}
+		a.Calls++
+		a.InputTokens += int64(rec.InputTokens)
+		a.OutputTokens += int64(rec.OutputTokens)
+		a.OutputChars += int64(rec.OutputChars)
+	}
+	out := make([]Agg, 0, len(byAgent))
+	for _, a := range byAgent {
+		out = append(out, *a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Calls > out[j].Calls })
+	return out, nil
 }
