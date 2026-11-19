@@ -124,6 +124,7 @@ var zh = dict{
 		"/insight [天数] — 近 N 天用量洞察（默认 7）\n" +
 		"/model [名称] — 查看/切换模型\n" +
 		"/agents · /agent <名> — 查看/切换本会话的 agent（handoff）\n" +
+		"/<agent名> <任务> — 直接派给任意已配置 agent（如 /reviewer 审 diff）\n" +
 		"/system [提示词] — 查看/覆盖 system 提示词\n" +
 		"/skills · /skill <名> <指令> — 使用技能\n" +
 		"/flows · /flow <名> <输入> — 跑多步工作流\n" +
@@ -248,6 +249,7 @@ var en = dict{
 		"/insight [days] — usage insights for the last N days (default 7)\n" +
 		"/model [name] — show/switch model\n" +
 		"/agents · /agent <name> — show/switch this session's agent (handoff)\n" +
+		"/<agent> <task> — dispatch straight to any configured agent\n" +
 		"/system [prompt] — show/override system prompt\n" +
 		"/skills · /skill <name> <instruction> — skills\n" +
 		"/flows · /flow <name> <input> — multi-step workflows\n" +

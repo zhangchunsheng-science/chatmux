@@ -82,6 +82,7 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 
 | 命令 | 作用 |
 |---|---|
+| `/help` | 列出全部命令（群内发现入口） |
 | `/bg <任务>` | 丢后台跑——会话立即可用，完成后 @你 发回结果 |
 | `/jobs` | 列出后台任务 |
 | `/stop [bg\|任务id]` | 打断前台 / 后台任务 |
@@ -360,6 +361,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.6.3（对齐循环第 24 轮）：命令面终校——/help 实际输出、agent.go dispatch
+命令集、README 命令表三方核对（26 条 dispatch 全部有文档；README 中的
+/admin/*、/app 均为 HTTP/容器路径，非聊天命令）。补两处：/help 增加动态派发
+/<agent名> 行（zh/en，此前聊天内无法发现该能力），README 表补 /help 行。
 
 v0.6.2（对齐循环第 23 轮）：失败调用记账补全——第 22 轮只覆盖了"流已建立
 后出错"（model.err）一条路径，"Stream 直接返回错误"（model.fail，如密钥无效
