@@ -99,9 +99,9 @@ type FileSender interface {
 
 // FormSender is a Sender whose platform supports interactive form
 // cards. Submitting the form feeds a synthetic message back into the
-// runtime with the collected values.
+// runtime with the collected values (or answers a blocking ask).
 type FormSender interface {
-	SendForm(ctx context.Context, formName string, fields []FormField) error
+	SendForm(ctx context.Context, title, formName, desc string, fields []FormField) error
 }
 
 // HTTPMounter is implemented by webhook-based channels (WeCom, Feishu

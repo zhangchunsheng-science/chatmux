@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/agent"
+	"github.com/zhangchunsheng-science/chatmux/internal/ask"
 	"github.com/zhangchunsheng-science/chatmux/internal/bus"
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/channel/dingtalk"
@@ -55,8 +56,8 @@ func main() {
 
 func runClient(args []string, cfgPath string) int {
 	cmd := args[0]
-	if cmd != "status" && cmd != "stop" && cmd != "send" {
-		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send)\n", cmd)
+	if cmd != "status" && cmd != "stop" && cmd != "send" && cmd != "ask" {
+		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send|ask)\n", cmd)
 		return 2
 	}
 	// accept -config after the subcommand too: chatmux status -config x.json
@@ -135,6 +136,49 @@ func runClient(args []string, cfgPath string) int {
 			return 1
 		}
 		fmt.Println("已发送。")
+	case "ask":
+		fs := flag.NewFlagSet("ask", flag.ExitOnError)
+		to := fs.String("to", "", "channel:chatId[:threadId]")
+		_ = fs.String("opt", "", "fixed option (repeatable)")
+		timeout := fs.Int("timeout", 600, "timeout seconds")
+		fs.Parse(rest)
+		// collect repeated -opt flags in original order
+		var opts []string
+		raw := rest
+		for i := 0; i < len(raw); i++ {
+			if raw[i] == "-opt" && i+1 < len(raw) {
+				opts = append(opts, raw[i+1])
+			}
+		}
+		question := strings.Join(fs.Args(), " ")
+		if *to == "" || question == "" {
+			fmt.Fprintln(os.Stderr, `usage: chatmux ask -to channel:chatId [-opt A -opt B] [-timeout 600] 问题`)
+			return 2
+		}
+		parts := strings.SplitN(*to, ":", 3)
+		payload := map[string]any{"channel": parts[0], "chatId": parts[1], "question": question, "timeoutSec": *timeout}
+		if len(opts) > 0 {
+			payload["options"] = opts
+		}
+		if len(parts) == 3 {
+			payload["threadId"] = parts[2]
+		}
+		b, _ := json.Marshal(payload)
+		fmt.Println("已向聊天提问，等待回答…（Ctrl-C 放弃）")
+		body, code, err := adminReq(http.MethodPost, base+"/admin/ask", token, b)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if code != 200 {
+			fmt.Fprintf(os.Stderr, "HTTP %d\n%s\n", code, body)
+			return 1
+		}
+		var out struct {
+			Answer string `json:"answer"`
+		}
+		_ = json.Unmarshal(body, &out)
+		fmt.Println(out.Answer)
 	}
 	return 0
 }
@@ -243,13 +287,19 @@ func runServer(cfgPath string) int {
 			})
 		}
 	}
-	// form card submissions (feishu) → synthetic message into the bus
+	// form card submissions (feishu) → ask answers, else synthetic message
+	askBroker := ask.New()
 	for _, ch := range chans {
 		name := ch.Name()
 		if fh, ok := ch.(interface {
 			SetFormHandler(func(form, chatID, operator string, values map[string]string))
 		}); ok {
 			fh.SetFormHandler(func(form, chatID, operator string, values map[string]string) {
+				if strings.HasPrefix(form, "chatmux_ask:") {
+					log.Printf("ask answered via form by %s in %s", operator, chatID)
+					askBroker.ResolveForm(form, values)
+					return
+				}
 				log.Printf("form %s submitted by %s in %s", form, operator, chatID)
 				synthetic := channel.Message{
 					Channel: name, ChatID: chatID, UserID: operator,
@@ -264,6 +314,11 @@ func runServer(cfgPath string) int {
 	in := b.Subscribe()
 	go func() {
 		for msg := range in {
+			// a pending blocking question in this chat eats the next
+			// (valid) reply as its answer before the agent sees it
+			if askBroker.TryAnswer(msg) {
+				continue
+			}
 			go rt.Handle(context.Background(), msg)
 		}
 	}()
@@ -303,6 +358,7 @@ func runServer(cfgPath string) int {
 	// ---- admin endpoints ----
 	started := time.Now()
 	mountAdmin(&mux, cfg, rt, chans, stop, started)
+	mountAsk(&mux, cfg, chans, askBroker)
 
 	// ---- dashboard ----
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -589,6 +645,92 @@ func formatFormSubmit(cfg *config.Config, form, operator string, values map[stri
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// mountAsk serves POST /admin/ask: a blocking question into a chat —
+// feishu gets an interactive form card, other channels get plain text
+// (the next valid reply in that chat answers it). The HTTP request
+// parks until answered or timed out; client `chatmux ask` wraps it for
+// CLI agents.
+func mountAsk(mux *http.ServeMux, cfg *config.Config, chans map[string]channel.Channel, broker *ask.Broker) {
+	guard := func(w http.ResponseWriter, r *http.Request) bool {
+		if cfg.HTTP.AdminToken == "" {
+			return true
+		}
+		if r.Header.Get("X-Admin-Token") == cfg.HTTP.AdminToken ||
+			r.URL.Query().Get("token") == cfg.HTTP.AdminToken {
+			return true
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("unauthorized"))
+		return false
+	}
+	mux.HandleFunc("/admin/ask", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !guard(w, r) {
+			return
+		}
+		var req struct {
+			Channel    string   `json:"channel"`
+			ChatID     string   `json:"chatId"`
+			ThreadID   string   `json:"threadId,omitempty"`
+			Question   string   `json:"question"`
+			Options    []string `json:"options,omitempty"`
+			TimeoutSec int      `json:"timeoutSec,omitempty"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("bad json: " + err.Error()))
+			return
+		}
+		ch, ok := chans[req.Channel]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte("unknown channel"))
+			return
+		}
+		if strings.TrimSpace(req.Question) == "" || req.ChatID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("question and chatId are required"))
+			return
+		}
+		sender, err := ch.SenderFor(channel.Message{ChatID: req.ChatID, ThreadID: req.ThreadID})
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(err.Error()))
+			return
+		}
+		p := broker.Register(req.Channel, req.ChatID, req.Options)
+
+		delivered := false
+		if fs, ok := sender.(channel.FormSender); ok {
+			field := channel.FormField{Name: "answer", Label: req.Question, Type: "input", Required: boolPtr(true)}
+			if len(req.Options) > 0 {
+				field.Type, field.Options = "select", req.Options
+			}
+			delivered = fs.SendForm(r.Context(), "❓ "+req.Question, "chatmux_ask:"+p.ID(), "", []channel.FormField{field}) == nil
+		}
+		if !delivered {
+			text := "❓ " + req.Question
+			if len(req.Options) > 0 {
+				text += "\n" + strings.Join(req.Options, " / ")
+			}
+			_, _ = sender.Send(r.Context(), text+"\n（直接回复本条作答）", channel.SendOptions{Final: true})
+		}
+		answer, err := p.Wait(r.Context(), time.Duration(req.TimeoutSec)*time.Second)
+		if err != nil {
+			w.WriteHeader(http.StatusGatewayTimeout)
+			_, _ = w.Write([]byte("ask timed out or cancelled: " + err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"answer": answer})
+	})
+}
+
+func boolPtr(b bool) *bool { return &b }
 
 // loadSkills reads *.md prompts from dir into name→body map.
 func loadSkills(dir string) map[string]string {

@@ -521,7 +521,7 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			reply(r.say("form.unsupported"))
 			break
 		}
-		if err := fs.SendForm(context.Background(), fc.Name, fc.Fields); err != nil {
+		if err := fs.SendForm(context.Background(), fc.Name, fc.Name, fc.Desc, fc.Fields); err != nil {
 			reply(r.say("form.err", err))
 			break
 		}

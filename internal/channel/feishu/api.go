@@ -409,9 +409,10 @@ func feedbackCard(text string) string {
 }
 
 // formCard builds a card JSON 2.0 form: labeled inputs + a form_submit
-// button carrying {"chatmux_form": name}. Submitted values come back on
-// the card-action callback in Action.FormValue.
-func formCard(name, desc string, fields []channel.FormField) string {
+// button carrying {"chatmux_form": formName} (the routing token).
+// Submitted values come back on the card-action callback in
+// Action.FormValue.
+func formCard(title, formName, desc string, fields []channel.FormField) string {
 	elements := []any{}
 	if desc != "" {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": desc})
@@ -459,13 +460,13 @@ func formCard(name, desc string, fields []channel.FormField) string {
 		"name":         "chatmux_form_submit",
 		"text":         map[string]string{"tag": "plain_text", "content": "提交"},
 		"button_style": "primary",
-		"form_value":   map[string]string{"chatmux_form": name},
+		"form_value":   map[string]string{"chatmux_form": formName},
 	})
 	card := map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{"update_multi": true},
 		"header": map[string]any{
-			"title":    map[string]string{"tag": "plain_text", "content": name},
+			"title":    map[string]string{"tag": "plain_text", "content": title},
 			"template": "blue",
 		},
 		"body": map[string]any{"elements": elements},

@@ -612,8 +612,8 @@ func isImagePath(p string) bool {
 }
 
 // SendForm posts an interactive form card into the sender's chat.
-func (s *Sender) SendForm(ctx context.Context, formName string, fields []channel.FormField) error {
-	_, err := s.f.api.sendMessage(ctx, "chat_id", s.chatID, "interactive", formCard(formName, "", fields), "")
+func (s *Sender) SendForm(ctx context.Context, title, formName, desc string, fields []channel.FormField) error {
+	_, err := s.f.api.sendMessage(ctx, "chat_id", s.chatID, "interactive", formCard(title, formName, desc, fields), "")
 	return err
 }
 

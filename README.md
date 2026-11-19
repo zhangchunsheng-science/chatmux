@@ -89,6 +89,19 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/rewind [轮数]` | 回退上下文（模型忘记最近 N 轮，聊天记录不动） |
 | `/retry` | 重试上一轮（回退后重发） |
 | `/remind <时间> <事由>` | 一次性提醒：+30m / +1h30m / 15:30 / 2026-11-20 15:30 |
+
+## 阻塞问答（ask）
+
+CLI agent 或运维在会话外向聊天提问并阻塞等答案——botmux ask 的对应件：
+
+```bash
+chatmux ask -to feishu:oc_xxxx "部署走哪个方案？" -opt 方案A -opt 方案B -timeout 600
+```
+
+飞书收到 ❓ 表单卡片（选项走下拉，提交即回）；其余平台收到文本提问，
+该聊天下一条有效回复即为答案（选项题只认选项）。CLI agent 里配好
+system 提示词即可把它当"问人工具"用。每个聊天同时只有一个待答问题，
+后问覆盖前问。
 | `/status` | 当前会话状态（模式/模型/历史/后台任务数） |
 | `/model [名称]` | 查看/切换本会话模型 |
 | `/agents` · `/agent <名>` | 查看/切换本会话 agent（handoff；`/agent auto` 恢复路由） |
