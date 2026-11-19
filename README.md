@@ -93,6 +93,8 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/remind <时间> <事由>` | 一次性提醒：+30m / +1h30m / 15:30 / 2026-11-20 15:30 |
 | `/schedule add <时间> <事由>` | 周期任务：每天 09:30 / 工作日 9:00 / 每周一 10:00 / 每月 1 号 09:00 / 原生 cron；`del <id>` 删、`list` 列（重启保留） |
 | `/status` | 当前会话状态（模式/模型/历史/后台任务数） |
+| `/dash` | 网页看板与会话终端地址 |
+| `/insight [天数]` | 用量洞察：近 N 天（默认 7）按 agent 的调用数/tokens/反馈 |
 | `/model [名称]` | 查看/切换本会话模型 |
 | `/agents` · `/agent <名>` | 查看/切换本会话 agent（handoff；`/agent auto` 恢复路由） |
 | `/<agent名> <任务>` | 动态派发：任意已配置 agent 直接接活（如 `/reviewer 帮我审这段 diff`），后台执行、结果回本聊天 |
@@ -358,6 +360,13 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.6.0（对齐循环第 19-20 轮，收尾轮）：与 botmux 命令表全量对照——49 条
+命令逐条映射（对齐 / 对应实现 / 架构不适用三类）；补 /dash（看板地址）与
+/insight [天数]（按 agent 的近 N 天调用量/tokens/反馈聚合，
+usage.SummarizeSince 时间窗）；其余 botmux 专属命令（adopt/lane/term/queue/
+fork/repo wt 等）绑定其"每话题一个 PTY CLI 进程"架构，chatmux 的网关+
+会话轮次模型以 /new//agents/后台队列/工作流覆盖对应场景，如实声明不逐条复刻。
 
 v0.5.8（对齐循环第 18 轮）：会议代理（飞书 VC）——订阅 vc.bot.meeting_*
 与 vc.meeting.recording_ready_v1 事件，会议被邀/开始/结束/录制就绪映射为

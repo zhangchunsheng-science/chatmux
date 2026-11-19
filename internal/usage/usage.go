@@ -85,6 +85,13 @@ type Agg struct {
 // Summarize aggregates usage.jsonl by agent. feedback rows (Mode
 // "feedback:up"/"feedback:down") count into the tally.
 func Summarize(dataDir string) ([]Agg, error) {
+	return SummarizeSince(dataDir, time.Time{})
+}
+
+// SummarizeSince aggregates like Summarize but only rows at/after since
+// (zero = all rows). Malformed or empty timestamps count as "no filter
+// match" — old rows without timestamps are only kept for a zero since.
+func SummarizeSince(dataDir string, since time.Time) ([]Agg, error) {
 	if dataDir == "" {
 		dataDir = "data"
 	}
@@ -103,6 +110,12 @@ func Summarize(dataDir string) ([]Agg, error) {
 		var rec Record
 		if json.Unmarshal([]byte(line), &rec) != nil {
 			continue
+		}
+		if !since.IsZero() {
+			ts, err := time.Parse(time.RFC3339, rec.Time)
+			if err != nil || ts.Before(since) {
+				continue
+			}
 		}
 		// feedback rows are logged with Agent="feedback" and Channel=<instance>
 		if strings.HasPrefix(rec.Mode, "feedback:") {

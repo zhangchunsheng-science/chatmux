@@ -11,6 +11,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
+	"github.com/zhangchunsheng-science/chatmux/internal/usage"
 )
 
 // fakeSender records outbound messages.
@@ -106,6 +107,12 @@ func TestSlashCommands(t *testing.T) {
 		t.Fatalf("/help should be a command")
 	}
 	waitContains(t, s, "/stop")
+
+	// /dash replies the dashboard URL
+	if !cmd("/dash") {
+		t.Fatalf("/dash should be a command")
+	}
+	waitContains(t, s, "http://127.0.0.1:8080/")
 
 	// /model switch + query
 	if !cmd("/model gpt-4o-mini") {
@@ -527,4 +534,25 @@ func TestMeetingEventAnnounce(t *testing.T) {
 	if n := len(s2.sent); n != 0 {
 		t.Fatalf("without meeting config should not send, got %d", n)
 	}
+}
+
+func TestInsightCommand(t *testing.T) {
+	rt, key := testRuntime()
+	rt.dataDir = t.TempDir()
+	ul := usage.New(rt.dataDir)
+	ul.Log(usage.Record{Agent: "default", Mode: "api", InputTokens: 100, OutputTokens: 200})
+	ul.Close()
+	a := &rt.cfg.Agents[0]
+	s := &fakeSender{}
+	if !rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/insight"}, a, s) {
+		t.Fatal("/insight should be a command")
+	}
+	waitContains(t, s, "default — 1 次")
+	waitContains(t, s, "↑100 ↓200")
+
+	// empty window
+	s2 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/insight 0"}, a, s2)
+	// 0 is not a valid day count → falls back to 7 (still data) — just assert no crash
+	_ = s2
 }

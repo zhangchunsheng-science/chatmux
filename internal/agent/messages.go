@@ -70,6 +70,10 @@ var zh = dict{
 	"status.idle":      "空闲",
 	"model.cur":        "当前模型: %s\n用法: /model <模型名> 切换",
 	"model.set":        "模型已切换为 %s，下一条消息生效。",
+	"dash.url":         "📊 网页看板与会话终端：%s\n（adminToken 在配置里，看板页输入一次即可）",
+	"insight.none":     "近 %d 天没有用量记录。",
+	"insight.header":   "📈 近 %d 天用量（按 agent）：",
+	"insight.more":     "· …另有 %d 个 agent 略",
 	"system.cur":       "当前 system 提示词:\n%s\n\n用法: /system <新提示词>；/new 恢复默认",
 	"system.set":       "system 提示词已更新。",
 	"skills.none":      "没有已安装技能。把 *.md 放到 skillsDir 并重启。",
@@ -116,6 +120,8 @@ var zh = dict{
 		"/orchestrate a,b [+ 汇总] 任务 — 并行多 agent 派发（可选汇总）\n" +
 		"/oncall [next] — 查看值班（当前/后续，配置 oncall.members）\n" +
 		"/status — 查看当前会话状态\n" +
+		"/dash — 网页看板/会话终端地址\n" +
+		"/insight [天数] — 近 N 天用量洞察（默认 7）\n" +
 		"/model [名称] — 查看/切换模型\n" +
 		"/agents · /agent <名> — 查看/切换本会话的 agent（handoff）\n" +
 		"/system [提示词] — 查看/覆盖 system 提示词\n" +
@@ -188,6 +194,10 @@ var en = dict{
 	"status.idle":      "idle",
 	"model.cur":        "Current model: %s\nUsage: /model <name> to switch",
 	"model.set":        "Model switched to %s, effective next message.",
+	"dash.url":         "📊 Web dashboard & console: %s\n(adminToken from the config; enter once on the page)",
+	"insight.none":     "No usage recorded in the last %d days.",
+	"insight.header":   "📈 Usage, last %d days (by agent):",
+	"insight.more":     "· …%d more agents omitted",
 	"system.cur":       "Current system prompt:\n%s\n\nUsage: /system <prompt>; /new restores default",
 	"system.set":       "System prompt updated.",
 	"skills.none":      "No skills installed. Drop *.md files into skillsDir and restart.",
@@ -234,6 +244,8 @@ var en = dict{
 		"/orchestrate a,b [+ merger] task — parallel fan-out with optional merge\n" +
 		"/oncall [next] — duty roster (current/upcoming, from oncall.members)\n" +
 		"/status — session status\n" +
+		"/dash — web dashboard & console URL\n" +
+		"/insight [days] — usage insights for the last N days (default 7)\n" +
 		"/model [name] — show/switch model\n" +
 		"/agents · /agent <name> — show/switch this session's agent (handoff)\n" +
 		"/system [prompt] — show/override system prompt\n" +

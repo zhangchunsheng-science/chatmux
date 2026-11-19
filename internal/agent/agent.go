@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -402,6 +403,36 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			_, _ = sender.Send(context.Background(), r.say("remind.fire", humanDur(time.Since(setAt)), note),
 				channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
 		})
+	case "/insight":
+		days := 7
+		if n, err := strconv.Atoi(strings.TrimSpace(arg)); err == nil && n > 0 && n <= 365 {
+			days = n
+		}
+		aggs, err := usage.SummarizeSince(r.dataDir, time.Now().AddDate(0, 0, -days))
+		if err != nil || len(aggs) == 0 {
+			reply(r.say("insight.none", days))
+			break
+		}
+		lines := []string{r.say("insight.header", days)}
+		for i, a := range aggs {
+			if i >= 8 {
+				lines = append(lines, r.say("insight.more", len(aggs)-8))
+				break
+			}
+			fb := ""
+			if a.FeedbackUp+a.FeedbackDown > 0 {
+				fb = " · 👍" + strconv.Itoa(a.FeedbackUp) + "/👎" + strconv.Itoa(a.FeedbackDown)
+			}
+			lines = append(lines, fmt.Sprintf("· %s — %d 次 · ↑%d ↓%d tokens%s",
+				firstNonEmpty(a.Agent, "(未知)"), a.Calls, a.InputTokens, a.OutputTokens, fb))
+		}
+		reply(strings.Join(lines, "\n"))
+	case "/dash":
+		listen := "127.0.0.1:8080"
+		if r.cfg != nil && r.cfg.HTTP.Listen != "" {
+			listen = r.cfg.HTTP.Listen
+		}
+		reply(r.say("dash.url", "http://"+listen+"/"))
 	case "/status":
 		r.mu.Lock()
 		_, busy := r.turns[key]
