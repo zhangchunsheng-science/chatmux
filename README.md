@@ -97,6 +97,7 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/agents` · `/agent <名>` | 查看/切换本会话 agent（handoff；`/agent auto` 恢复路由） |
 | `/<agent名> <任务>` | 动态派发：任意已配置 agent 直接接活（如 `/reviewer 帮我审这段 diff`），后台执行、结果回本聊天 |
 | `/orchestrate a,b [+ 汇总] 任务` | 并行编排：多 agent 同时做同一任务，完成即回帖；`+ 汇总agent` 最后综合各方答案 |
+| `/oncall [next]` | 值班表：当前值班/换班时间/轮序；next 看接下来三班 |
 | `/system [提示词]` | 查看/覆盖 system 提示词 |
 | `/skills` · `/skill <名> <指令>` | 列出 / 使用技能 |
 | `/flows` · `/flow <名> <输入>` | 列出 / 后台跑多步工作流 |
@@ -222,6 +223,17 @@ Telegram 音频文件均支持。
 首次只记基线不触发；之后每次变更产出 +/- 行级差异摘录（上限可配长度，
 LCS 行 diff）注入 `{{diff}}`，其余占位符 `{{name}}` `{{path}}`。
 
+## 值班（oncall）
+
+```json
+"oncall": { "members": ["张三", "李四", "王五"], "rotation": "daily",
+            "anchor": "2026-11-01", "channel": "feishu", "chatId": "oc_xxxx" }
+```
+
+- `/oncall` 当前值班 + 换班时间 + 轮序；`/oncall next` 接下来三班
+- rotation `daily`（默认）/`weekly`（周一起算）；anchor 之前钳到首位
+- 每天 00:05 检查换班，变化即在配置的聊天发交接通知（🔔 值班交接：A → B）
+
 ## 网页看板
 
 浏览器打开 `http://127.0.0.1:8080/`：通道健康、运行时与会话指标、后台任务
@@ -304,6 +316,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.0（对齐循环第 10 轮）：oncall 值班——配置 members + daily/weekly
+轮换 + anchor 起算，/oncall 与 /oncall next 查询，每天 00:05 自动检查
+换班并向配置聊天发 🔔 交接通知。
 
 v0.4.9（对齐循环第 9 轮）：fleet 多实例管理——~/.chatmux/fleet.json
 （或 -fleet / CHATMUX_FLEET）列出多网关，chatmux fleet list 并行探测

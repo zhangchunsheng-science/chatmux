@@ -44,6 +44,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/docwatch"
 	"github.com/zhangchunsheng-science/chatmux/internal/fleet"
 	"github.com/zhangchunsheng-science/chatmux/internal/mcp"
+	"github.com/zhangchunsheng-science/chatmux/internal/oncall"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
 	"github.com/zhangchunsheng-science/chatmux/internal/update"
@@ -526,6 +527,25 @@ func runServer(cfgPath string) int {
 	}
 	sched.Start(ctx)
 	rt.SetScheduler(sched, ctx) // /schedule command + persisted user schedules
+
+	// on-call handover notice: check right after midnight; announce changes
+	if cfg.Oncall != nil && len(cfg.Oncall.Members) > 0 && cfg.Oncall.Channel != "" && cfg.Oncall.ChatID != "" {
+		if oc, err := oncall.Parse(*cfg.Oncall, time.Now()); err == nil {
+			sched.AddLive(ctx, cron.Entry{
+				Name: "oncall-handover", Spec: "5 0 * * *",
+				Fire: func(ctx context.Context) {
+					if txt := oc.HandoverText(time.Now()); txt != "" {
+						log.Printf("oncall handover: %s", txt)
+						rt.Handle(ctx, channel.Message{
+							Channel: cfg.Oncall.Channel, ChatID: cfg.Oncall.ChatID,
+							ChatType: "group", MentionedMe: true,
+							UserName: "oncall", Text: txt,
+						})
+					}
+				},
+			})
+		}
+	}
 
 	// ---- doc watchers ----
 	if len(cfg.DocWatch) > 0 {

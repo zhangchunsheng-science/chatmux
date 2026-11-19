@@ -141,5 +141,12 @@
       "chatId": "oc_xxxx",
       "prompt": "计划文档有更新，请总结变更并提醒相关事项：\n{{diff}}"
     }
-  ]
+  ],
+  "oncall": {
+    "members": ["张三", "李四", "王五"],
+    "rotation": "daily",
+    "anchor": "2026-11-01",
+    "channel": "feishu",
+    "chatId": "oc_xxxx"
+  }
 }

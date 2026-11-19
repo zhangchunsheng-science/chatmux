@@ -49,6 +49,10 @@ var zh = dict{
 	"orchestrate.part":    "【%s】\n%s",
 	"orchestrate.merged":  "【汇总 · %s】\n%s",
 	"orchestrate.fail":    "【%s】调用失败：%v",
+	"oncall.none":         "没有配置值班表（chatmux.json 的 oncall.members）。",
+	"oncall.now":          "🕐 当前值班：%s（%s 换班）\n轮序：%s（/oncall next 看后面）",
+	"oncall.next.header":  "接下来的值班：",
+	"oncall.next.line":    "· %s：%s → %s",
 	"usage.sched":         "/schedule add <时间> <内容> · /schedule list · /schedule del <id>",
 	"sched.none":          "没有会话内定时任务（/schedule add 每天 9:30 站会总结）。",
 	"sched.header":        "本实例的会话内定时任务：",
@@ -109,6 +113,7 @@ var zh = dict{
 		"/remind <时间> <事由> — 一次性提醒（+30m / 15:30 / 2026-11-20 15:30）\n" +
 		"/schedule — 会话内定时任务（每天 9:30 站会总结）\n" +
 		"/orchestrate a,b [+ 汇总] 任务 — 并行多 agent 派发（可选汇总）\n" +
+		"/oncall [next] — 查看值班（当前/后续，配置 oncall.members）\n" +
 		"/status — 查看当前会话状态\n" +
 		"/model [名称] — 查看/切换模型\n" +
 		"/agents · /agent <名> — 查看/切换本会话的 agent（handoff）\n" +
@@ -161,6 +166,10 @@ var en = dict{
 	"orchestrate.part":    "【%s】\n%s",
 	"orchestrate.merged":  "【merged · %s】\n%s",
 	"orchestrate.fail":    "【%s】failed: %v",
+	"oncall.none":         "No on-call roster configured (oncall.members in chatmux.json).",
+	"oncall.now":          "🕐 On duty now: %s (shift ends %s)\nRotation: %s (/oncall next for more)",
+	"oncall.next.header":  "Upcoming shifts:",
+	"oncall.next.line":    "· %s: %s → %s",
 	"usage.sched":         "/schedule add <when> <text> · /schedule list · /schedule del <id>",
 	"sched.none":          "No in-chat schedules yet (/schedule add daily 9:30 standup).",
 	"sched.header":        "In-chat schedules:",
@@ -221,6 +230,7 @@ var en = dict{
 		"/remind <time> <note> — one-shot reminder (+30m / 15:30 / 2026-11-20 15:30)\n" +
 		"/schedule — in-chat recurring schedules (daily 9:30 standup)\n" +
 		"/orchestrate a,b [+ merger] task — parallel fan-out with optional merge\n" +
+		"/oncall [next] — duty roster (current/upcoming, from oncall.members)\n" +
 		"/status — session status\n" +
 		"/model [name] — show/switch model\n" +
 		"/agents · /agent <name> — show/switch this session's agent (handoff)\n" +

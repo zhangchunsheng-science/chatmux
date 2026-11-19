@@ -573,6 +573,8 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		r.handleSchedule(key, msg, reply)
 	case "/orchestrate":
 		return r.handleOrchestrate(key, msg, sender)
+	case "/oncall":
+		r.handleOncallCommand(reply, strings.TrimSpace(arg))
 	case "/help":
 		reply(r.say("help"))
 	default:

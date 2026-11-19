@@ -36,6 +36,18 @@ type Config struct {
 	Forms []FormConfig `json:"forms,omitempty"`
 	// DocWatch watches local documents and fires prompts on change.
 	DocWatch []DocWatchConfig `json:"docwatch,omitempty"`
+	// Oncall rotates duty members (/oncall + shift-handover notices).
+	Oncall *OncallConfig `json:"oncall,omitempty"`
+}
+
+// OncallConfig is a duty rotation: members cycle daily or weekly from
+// Anchor (YYYY-MM-DD); handover notices go to Channel:ChatID.
+type OncallConfig struct {
+	Members  []string `json:"members"`
+	Rotation string   `json:"rotation,omitempty"` // daily (default) | weekly
+	Anchor   string   `json:"anchor,omitempty"`   // rotation start date
+	Channel  string   `json:"channel,omitempty"`  // handover notice target
+	ChatID   string   `json:"chatId,omitempty"`
 }
 
 // DocWatchConfig is one watched document: when the file's content

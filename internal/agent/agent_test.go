@@ -430,3 +430,29 @@ func TestOrchestrate(t *testing.T) {
 	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/orchestrate a1"}, &cfg.Agents[0], s3)
 	waitContains(t, s3, "用法: /orchestrate")
 }
+
+func TestOncallCommand(t *testing.T) {
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent: "default",
+	}
+	rt := NewRuntime(cfg, provider.NewRegistry(), map[string]channel.Channel{})
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+	s := &fakeSender{}
+
+	// no roster configured
+	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/oncall"}, &cfg.Agents[0], s)
+	waitContains(t, s, "没有配置值班表")
+
+	// with roster: anchor today so member 0 is on duty now
+	today := time.Now().Format("2006-01-02")
+	cfg.Oncall = &config.OncallConfig{Members: []string{"张三", "李四"}, Anchor: today}
+	s2 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/oncall"}, &cfg.Agents[0], s2)
+	waitContains(t, s2, "当前值班：张三")
+	waitContains(t, s2, "张三 → 李四")
+
+	s3 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/oncall next"}, &cfg.Agents[0], s3)
+	waitContains(t, s3, "李四")
+}
