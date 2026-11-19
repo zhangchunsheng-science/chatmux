@@ -550,6 +550,14 @@ func TestInsightCommand(t *testing.T) {
 	waitContains(t, s, "default — 1 次")
 	waitContains(t, s, "↑100 ↓200")
 
+	// error rows surface as 失败 in the same line
+	ul2 := usage.New(rt.dataDir)
+	ul2.Log(usage.Record{Agent: "default", Mode: "api", Error: "boom"})
+	ul2.Close()
+	s3 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/insight"}, a, s3)
+	waitContains(t, s3, "2 次 · 1 失败")
+
 	// empty window
 	s2 := &fakeSender{}
 	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/insight 0"}, a, s2)

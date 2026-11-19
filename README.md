@@ -361,6 +361,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.1（对齐循环第 22 轮）：失败调用记账——API 流出错（如 401）此前在
+usage 落账前 return，/insight 与看板会漏掉失败；现在失败也记（Record.Error，
+Agg.Errors 计数，/insight 行显示"N 失败"）。CLI 路径失败本就落账。
+
 v0.6.0（对齐循环第 19-20 轮，收尾轮）：与 botmux 命令表全量对照——49 条
 命令逐条映射（对齐 / 对应实现 / 架构不适用三类）；补 /dash（看板地址）与
 /insight [天数]（按 agent 的近 N 天调用量/tokens/反馈聚合，

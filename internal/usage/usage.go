@@ -25,6 +25,7 @@ type Record struct {
 	OutputTokens int    `json:"outputTokens,omitempty"`
 	OutputChars  int    `json:"outputChars,omitempty"`
 	DurationMs   int64  `json:"durationMs,omitempty"`
+	Error        string `json:"error,omitempty"` // non-empty = failed call
 }
 
 // Logger appends records to <dataDir>/usage.jsonl.
@@ -75,6 +76,7 @@ func (l *Logger) Close() {
 type Agg struct {
 	Agent        string `json:"agent"`
 	Calls        int    `json:"calls"`
+	Errors       int    `json:"errors"` // subset of Calls that failed
 	InputTokens  int64  `json:"inputTokens"`
 	OutputTokens int64  `json:"outputTokens"`
 	OutputChars  int64  `json:"outputChars"`
@@ -141,6 +143,9 @@ func SummarizeSince(dataDir string, since time.Time) ([]Agg, error) {
 			byAgent[rec.Agent] = a
 		}
 		a.Calls++
+		if rec.Error != "" {
+			a.Errors++
+		}
 		a.InputTokens += int64(rec.InputTokens)
 		a.OutputTokens += int64(rec.OutputTokens)
 		a.OutputChars += int64(rec.OutputChars)

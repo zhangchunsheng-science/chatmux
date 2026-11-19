@@ -423,8 +423,12 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			if a.FeedbackUp+a.FeedbackDown > 0 {
 				fb = " · 👍" + strconv.Itoa(a.FeedbackUp) + "/👎" + strconv.Itoa(a.FeedbackDown)
 			}
-			lines = append(lines, fmt.Sprintf("· %s — %d 次 · ↑%d ↓%d tokens%s",
-				firstNonEmpty(a.Agent, "(未知)"), a.Calls, a.InputTokens, a.OutputTokens, fb))
+			errs := ""
+			if a.Errors > 0 {
+				errs = " · " + strconv.Itoa(a.Errors) + " 失败"
+			}
+			lines = append(lines, fmt.Sprintf("· %s — %d 次%s · ↑%d ↓%d tokens%s",
+				firstNonEmpty(a.Agent, "(未知)"), a.Calls, errs, a.InputTokens, a.OutputTokens, fb))
 		}
 		reply(strings.Join(lines, "\n"))
 	case "/dash":
@@ -723,6 +727,14 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 			} else {
 				_ = t.sender.Replace(ctx, placeholderID, sb.String()+"\n\n[出错: "+d.Err.Error()+"]")
 			}
+			// failed calls are usage too: /insight and the dashboard must
+			// see attempts that never produced a reply
+			r.usage.Log(usage.Record{
+				Agent: t.agent.Name, Mode: "api", Provider: providerName(t.agent), Model: model,
+				Channel: msg.Channel, ChatID: msg.ChatID,
+				OutputChars: len(sb.String()), DurationMs: time.Since(start).Milliseconds(),
+				Error: d.Err.Error(),
+			})
 			return
 		}
 		sb.WriteString(d.Text)

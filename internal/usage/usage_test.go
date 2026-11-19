@@ -75,3 +75,18 @@ func TestSummarizeSince(t *testing.T) {
 		t.Fatalf("zero since must keep all rows: %+v", all)
 	}
 }
+
+func TestSummarizeErrors(t *testing.T) {
+	dir := t.TempDir()
+	l := New(dir)
+	l.Log(Record{Agent: "a", Mode: "api", InputTokens: 5})
+	l.Log(Record{Agent: "a", Mode: "api", Error: "401 unauthorized"})
+	l.Close()
+	aggs, err := Summarize(dir)
+	if err != nil || len(aggs) != 1 {
+		t.Fatalf("aggs: %v %v", aggs, err)
+	}
+	if aggs[0].Calls != 2 || aggs[0].Errors != 1 {
+		t.Fatalf("want 2 calls 1 error, got %+v", aggs[0])
+	}
+}
