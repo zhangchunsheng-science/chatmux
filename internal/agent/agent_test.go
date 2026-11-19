@@ -628,3 +628,70 @@ func (e *errDeltaProvider) Stream(_ context.Context, _ provider.Request) (<-chan
 	}()
 	return ch, nil
 }
+
+func TestQueuedNudgeOnce(t *testing.T) {
+	// a burst of follow-ups mid-turn must produce exactly one "queued"
+	// ack, not one per message
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "helper", Provider: "openai"}},
+		DefaultAgent: "helper",
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&blockingProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "慢任务"})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rt.mu.Lock()
+		_, busy := rt.turns[key]
+		rt.mu.Unlock()
+		if busy {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	t0, busy := rt.turns[key]
+	rt.mu.Unlock()
+	if !busy {
+		t.Fatal("turn not in flight")
+	}
+	for i := 0; i < 5; i++ {
+		rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1",
+			Text: fmt.Sprintf("补充 %d", i)})
+	}
+	time.Sleep(300 * time.Millisecond)
+	t0.cancel()
+	<-t0.done
+
+	acks := 0
+	s.mu.Lock()
+	sent := append([]string(nil), s.sent...)
+	s.mu.Unlock()
+	for _, m := range sent {
+		if strings.Contains(m, "正在处理上一条") {
+			acks++
+		}
+	}
+	if acks != 1 {
+		t.Fatalf("want exactly 1 queued ack for a 5-message burst, got %d", acks)
+	}
+	// the drained follow-ups must relaunch a fresh turn
+	deadline2 := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline2) {
+		rt.mu.Lock()
+		t1, busy := rt.turns[key]
+		rt.mu.Unlock()
+		if busy && t1 != t0 {
+			t1.cancel()
+			<-t1.done
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("drained follow-ups did not relaunch a turn")
+}

@@ -54,6 +54,7 @@ type turn struct {
 	sender  channel.Sender
 	started time.Time
 	queued  []provider.Msg // follow-ups arrived mid-turn
+	nudged  bool           // "queued" ack sent once per turn, not per message
 }
 
 // bgJob is a detached long-running task: the chat stays usable while it
@@ -141,11 +142,15 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 		t.queued = append(t.queued, provider.Msg{
 			Role: provider.User, Content: msg.Text, Name: msg.UserName,
 		})
-		// nudge the user that we saw them (best effort, non-fatal)
-		if s, err := r.senderFor(msg); err == nil {
-			go func() {
-				_, _ = s.Send(context.Background(), r.say("queued"), channel.SendOptions{})
-			}()
+		// nudge the user that we saw them — once per turn, so a burst of
+		// follow-ups doesn't spam the chat with acks (best effort, non-fatal)
+		if !t.nudged {
+			t.nudged = true
+			if s, err := r.senderFor(msg); err == nil {
+				go func() {
+					_, _ = s.Send(context.Background(), r.say("queued"), channel.SendOptions{})
+				}()
+			}
 		}
 		return
 	}
