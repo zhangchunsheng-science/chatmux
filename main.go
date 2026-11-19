@@ -443,7 +443,9 @@ func runServer(cfgPath string) int {
 	rt := agent.NewRuntime(cfg, registry, chans)
 	ul := usage.New(cfg.DataDir)
 	rt.SetUsageLogger(ul)
-	rt.SetSkills(loadSkills(cfg.SkillsDir))
+	skillBodies, skillDescs := loadSkills(cfg.SkillsDir)
+	rt.SetSkills(skillBodies)
+	rt.SetSkillDescs(skillDescs)
 	// 👍/👎 feedback (feishu/telegram/discord/slack) → usage log
 	for _, ch := range chans {
 		name := ch.Name()
@@ -1023,31 +1025,66 @@ func mountWebChat(mux *http.ServeMux, cfg *config.Config, wc *web.Web) {
 	})
 }
 
-// loadSkills reads *.md prompts from dir into name→body map.
-func loadSkills(dir string) map[string]string {
+// loadSkills reads skill prompts from dir into name→body (+ name→desc):
+// flat `*.md` files and Claude-style `<name>/SKILL.md` directories both
+// work; optional `---\ndescription: …\n---` frontmatter supplies the
+// /skills listing line (and is stripped from the injected body).
+func loadSkills(dir string) (map[string]string, map[string]string) {
 	if dir == "" {
-		return nil
+		return nil, nil
 	}
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	m := map[string]string{}
-	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+	descs := map[string]string{}
+	add := func(name, path string) {
+		b, err := os.ReadFile(path)
 		if err != nil {
+			return
+		}
+		body, desc := stripFrontmatter(string(b))
+		m[name] = body
+		if desc != "" {
+			descs[name] = desc
+		}
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err == nil {
+				add(e.Name(), filepath.Join(dir, e.Name(), "SKILL.md"))
+			}
 			continue
 		}
-		name := strings.TrimSuffix(e.Name(), ".md")
-		m[name] = string(b)
+		if !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		add(strings.TrimSuffix(e.Name(), ".md"), filepath.Join(dir, e.Name()))
 	}
 	if len(m) > 0 {
 		log.Printf("loaded %d skills from %s", len(m), dir)
 	}
-	return m
+	return m, descs
+}
+
+// stripFrontmatter pulls a leading `---` YAML block's description out
+// and returns the remaining body.
+func stripFrontmatter(s string) (body, desc string) {
+	if !strings.HasPrefix(s, "---\n") {
+		return s, ""
+	}
+	rest := s[4:]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return s, ""
+	}
+	for _, line := range strings.Split(rest[:end], "\n") {
+		if v, ok := strings.CutPrefix(line, "description:"); ok {
+			desc = strings.TrimSpace(strings.Trim(strings.TrimSpace(v), `"'`))
+		}
+	}
+	return strings.TrimLeft(rest[end+4:], "\r\n"), desc
 }
 
 const dashboardHTML = `<!DOCTYPE html>

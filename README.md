@@ -185,8 +185,10 @@ Telegram 音频文件均支持。
 
 ## 技能与工作流
 
-**技能**：`skillsDir` 目录下每个 `*.md` 是一个技能（文件名即技能名）。
-`/skill review 请看这段代码` 把技能全文 + 你的指令一起发给 agent。
+**技能**：`skillsDir` 目录下每个 `*.md` 是一个技能（文件名即技能名），
+也支持 Claude 式 `<name>/SKILL.md` 目录技能（目录内可放模板等辅助文件）。
+开头 `---\ndescription: …\n---` frontmatter 的描述进 `/skills` 列表，注入时
+自动剥离。`/skill review 请看这段代码` 把技能正文 + 你的指令一起发给 agent。
 
 **工作流**：chatmux.json 定义多步链，`/flow` 后台执行，`{{prev}}` 代上一步
 输出、`{{input}}` 代用户输入，每步可指定不同 agent：
@@ -321,6 +323,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.3（对齐循环第 13 轮）：技能包升级——支持 Claude 式 `<name>/SKILL.md`
+目录技能（目录内可放辅助文件），frontmatter `description:` 自动进 /skills
+列表（无描述截取正文首行），注入正文剥离 frontmatter；平铺 `*.md` 兼容不变。
 
 v0.5.2（对齐循环第 12 轮）：Telegram 群事件对齐——getUpdates 增订
 my_chat_member，进群（member/administrator/restricted）发欢迎语，

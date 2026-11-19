@@ -34,6 +34,7 @@ type Runtime struct {
 	usage      *usage.Logger
 	dataDir    string
 	skills     map[string]string // skill name → prompt markdown
+	skillDescs map[string]string // skill name → frontmatter description
 	sched      *cron.Scheduler   // set via SetScheduler; nil in tests
 	schedCtx   context.Context
 	userScheds []userSchedule // /schedule-managed, persisted
@@ -91,6 +92,9 @@ func (r *Runtime) Shutdown() { r.persistSessions() }
 
 // SetSkills installs skill prompts (name → markdown body).
 func (r *Runtime) SetSkills(m map[string]string) { r.skills = m }
+
+// SetSkillDescs installs frontmatter descriptions for /skills listings.
+func (r *Runtime) SetSkillDescs(m map[string]string) { r.skillDescs = m }
 
 // SetUsageLogger attaches token accounting (optional).
 func (r *Runtime) SetUsageLogger(l *usage.Logger) { r.usage = l }
@@ -449,7 +453,11 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		sort.Strings(names)
 		lines := []string{r.say("skills.header")}
 		for _, n := range names {
-			lines = append(lines, r.say("skills.line", n, truncate(strings.TrimSpace(r.skills[n]), 50)))
+			d := r.skillDescs[n]
+			if d == "" {
+				d = truncate(strings.TrimSpace(r.skills[n]), 50)
+			}
+			lines = append(lines, r.say("skills.line", n, d))
 		}
 		reply(strings.Join(lines, "\n"))
 	case "/skill":
