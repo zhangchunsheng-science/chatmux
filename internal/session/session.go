@@ -134,6 +134,26 @@ func (s *Store) Rewind(k Key, n int) int {
 	return drop / 2
 }
 
+// Info is a read-only session view for dashboards.
+type Info struct {
+	Key      Key
+	Title    string
+	Messages int
+	Model    string
+	Agent    string
+}
+
+// Infos snapshots all sessions for the dashboard.
+func (s *Store) Infos() []Info {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Info, 0, len(s.byKey))
+	for k, sess := range s.byKey {
+		out = append(out, Info{Key: k, Title: sess.Title, Messages: len(sess.History), Model: sess.Model, Agent: sess.Agent})
+	}
+	return out
+}
+
 // Len returns the number of live sessions.
 func (s *Store) Len() int {
 	s.mu.Lock()

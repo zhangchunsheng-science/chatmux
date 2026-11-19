@@ -19,6 +19,7 @@ type Pending struct {
 	channel string
 	chatID  string
 	options []string // empty = free-text answer
+	since   time.Time
 	ch      chan string
 }
 
@@ -45,6 +46,7 @@ func (b *Broker) Register(channelName, chatID string, options []string) *Pending
 		channel: channelName,
 		chatID:  chatID,
 		options: options,
+		since:   time.Now(),
 		ch:      make(chan string, 1),
 	}
 	if old, ok := b.byChat[channelName+"|"+chatID]; ok {
@@ -108,6 +110,25 @@ func (b *Broker) ResolveForm(form string, values map[string]string) bool {
 		}
 	}
 	return p.resolve(ans)
+}
+
+// PendingInfo is a dashboard view of one outstanding question.
+type PendingInfo struct {
+	ID      string    `json:"id"`
+	Channel string    `json:"channel"`
+	ChatID  string    `json:"chatId"`
+	Since   time.Time `json:"since"`
+}
+
+// Pending lists outstanding questions (the dashboard's "needs you").
+func (b *Broker) Pending() []PendingInfo {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]PendingInfo, 0, len(b.pending))
+	for id, p := range b.pending {
+		out = append(out, PendingInfo{ID: id, Channel: p.channel, ChatID: p.chatID, Since: p.since})
+	}
+	return out
 }
 
 // TryAnswer consumes an inbound chat message as the answer to a

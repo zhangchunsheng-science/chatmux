@@ -32,6 +32,38 @@ func (s *Scheduler) Add(e Entry) {
 	s.entries = append(s.entries, e)
 }
 
+// AddLive appends an entry and starts its loop right away — for
+// schedules added at runtime via /schedule.
+func (s *Scheduler) AddLive(ctx context.Context, e Entry) {
+	s.Add(e)
+	go s.loop(ctx, e)
+}
+
+// Remove drops entries by name; their loops notice and exit at the next
+// tick. Returns how many were removed.
+func (s *Scheduler) Remove(name string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.entries[:0]
+	n := 0
+	for _, e := range s.entries {
+		if e.Name == name {
+			n++
+			continue
+		}
+		out = append(out, e)
+	}
+	s.entries = out
+	return n
+}
+
+// Entries snapshots the current entry list.
+func (s *Scheduler) Entries() []Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Entry(nil), s.entries...)
+}
+
 // Start launches one goroutine per entry; all stop when ctx is done.
 func (s *Scheduler) Start(ctx context.Context) {
 	s.mu.Lock()
@@ -59,8 +91,22 @@ func (s *Scheduler) loop(ctx context.Context, e Entry) {
 			return
 		case <-timer.C:
 		}
+		if !s.stillListed(e.Name) {
+			return
+		}
 		safeFire(ctx, e)
 	}
+}
+
+func (s *Scheduler) stillListed(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.entries {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func safeFire(ctx context.Context, e Entry) {

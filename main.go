@@ -354,6 +354,7 @@ func runServer(cfgPath string) int {
 		log.Printf("cron %s @ %s → %s:%s", cc.Name, cc.Schedule, cc.Channel, cc.ChatID)
 	}
 	sched.Start(ctx)
+	rt.SetScheduler(sched, ctx) // /schedule command + persisted user schedules
 
 	// ---- admin endpoints ----
 	started := time.Now()
@@ -665,11 +666,16 @@ func mountAsk(mux *http.ServeMux, cfg *config.Config, chans map[string]channel.C
 		return false
 	}
 	mux.HandleFunc("/admin/ask", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		if !guard(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet { // outstanding questions (dashboard)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(broker.Pending())
 			return
 		}
 		var req struct {
@@ -782,6 +788,8 @@ td, th { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); pa
  · <span id="ts"></span></p>
 <h2>通道</h2><table id="channels"><tr><td colspan="2" class="muted">加载中…</td></tr></table>
 <h2>运行时</h2><table id="runtime"><tr><td colspan="2" class="muted">加载中…</td></tr></table>
+<h2>会话板</h2><table id="sessions"><tr><td colspan="5" class="muted">加载中…</td></tr></table>
+<h2>需要你回答</h2><table id="asks"><tr><td class="muted">无</td></tr></table>
 <h2>后台任务</h2><table id="jobs"><tr><td class="muted">无</td></tr></table>
 <h2>用量</h2><table id="usage"><tr><td colspan="6" class="muted">加载中…</td></tr></table>
 <script>
@@ -805,10 +813,23 @@ async function refresh(){
     $("channels").innerHTML = c;
     let r = "<tr><th>指标</th><th>值</th></tr>";
     for(const [k,v] of Object.entries(st.runtime)){
-      if(k==="backgroundJobs") continue;
+      if(k==="backgroundJobs"||k==="sessionList") continue;
       r += "<tr><td>"+esc(k)+"</td><td>"+esc(Array.isArray(v)?v.join(", "):v)+"</td></tr>";
     }
     $("runtime").innerHTML = r;
+    let ss = "<tr><th>会话</th><th>名称</th><th>agent</th><th>消息</th><th>状态</th></tr>";
+    (st.runtime.sessionList||[]).forEach(x=>{
+      ss += "<tr><td>"+esc(x.anchor)+"</td><td>"+esc(x.title||"-")+"</td><td>"+esc(x.agent||x.model||"-")+"</td><td>"+x.messages+"</td><td class='"+(x.busy?"bad":"good")+"'>"+(x.busy?"处理中":"空闲")+"</td></tr>";
+    });
+    $("sessions").innerHTML = (st.runtime.sessionList||[]).length ? ss : "<tr><td colspan='5' class='muted'>暂无会话</td></tr>";
+    try {
+      const asks = await get("/admin/ask");
+      let a = "<tr><th>提问</th><th>聊天</th><th>等待</th></tr>";
+      (asks||[]).forEach(x=>{
+        a += "<tr><td>"+esc(x.id)+"</td><td>"+esc(x.channel+":"+x.chatId)+"</td><td>"+esc(x.since||"")+"</td></tr>";
+      });
+      $("asks").innerHTML = (asks||[]).length ? a : "<tr><td class='muted'>无</td></tr>";
+    } catch(e){ $("asks").innerHTML = "<tr><td class='muted'>"+esc(e.message)+"</td></tr>"; }
     let j = "<tr><th>ID</th><th>类型</th><th>描述</th><th>已跑</th></tr>";
     (st.runtime.backgroundJobs||[]).forEach(x=>{
       j += "<tr><td>"+esc(x.id)+"</td><td>"+esc(x.flow||"任务")+"</td><td>"+esc(x.desc)+"</td><td>"+x.elapsedSec+"s</td></tr>";

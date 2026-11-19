@@ -18,6 +18,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
+	"github.com/zhangchunsheng-science/chatmux/internal/cron"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
 	"github.com/zhangchunsheng-science/chatmux/internal/usage"
@@ -25,14 +26,17 @@ import (
 
 // Runtime drives all agents.
 type Runtime struct {
-	cfg      *config.Config
-	registry *provider.Registry
-	sessions *session.Store
-	chans    map[string]channel.Channel
-	cli      *cliagent.Runner
-	usage    *usage.Logger
-	dataDir  string
-	skills   map[string]string // skill name → prompt markdown
+	cfg        *config.Config
+	registry   *provider.Registry
+	sessions   *session.Store
+	chans      map[string]channel.Channel
+	cli        *cliagent.Runner
+	usage      *usage.Logger
+	dataDir    string
+	skills     map[string]string // skill name → prompt markdown
+	sched      *cron.Scheduler   // set via SetScheduler; nil in tests
+	schedCtx   context.Context
+	userScheds []userSchedule // /schedule-managed, persisted
 
 	mu     sync.Mutex
 	turns  map[session.Key]*turn // in-flight turn per chat
@@ -562,9 +566,23 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		r.sessions.Set(key, func(s *session.Session) { s.Agent = arg })
 		r.persistSessions()
 		reply(r.say("agent.set", arg))
+	case "/schedule":
+		r.handleSchedule(key, msg, reply)
 	case "/help":
 		reply(r.say("help"))
 	default:
+		// dynamic dispatch: /<agent名> <任务> runs that agent as a
+		// background job in this chat (botmux multi-bot delegation)
+		if name := strings.TrimPrefix(cmd, "/"); name != "" {
+			if target := r.agentByName(name); target != nil {
+				if strings.TrimSpace(arg) == "" {
+					reply(r.say("dispatch.usage", name))
+					return true
+				}
+				r.startBgJob(key, msg, target, sender, arg, "")
+				return true
+			}
+		}
 		// Unknown slash command: let the model see it (agent may explain).
 		return false
 	}
@@ -930,12 +948,33 @@ func (r *Runtime) Status() map[string]any {
 		})
 	}
 	r.mu.Unlock()
+	sessions := []map[string]any{}
+	for _, si := range r.sessions.Infos() {
+		sessions = append(sessions, map[string]any{
+			"anchor":   shortKey(si.Key),
+			"title":    si.Title,
+			"messages": si.Messages,
+			"model":    si.Model,
+			"agent":    si.Agent,
+			"busy":     containsStr(busy, shortKey(si.Key)),
+		})
+	}
 	return map[string]any{
 		"sessions":       r.sessions.Len(),
 		"turnsInFlight":  len(busy),
 		"busyAnchors":    busy,
 		"backgroundJobs": jobs,
+		"sessionList":    sessions,
 	}
+}
+
+func containsStr(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runtime) senderFor(msg channel.Message) (channel.Sender, error) {

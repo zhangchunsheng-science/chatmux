@@ -89,6 +89,17 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/rewind [轮数]` | 回退上下文（模型忘记最近 N 轮，聊天记录不动） |
 | `/retry` | 重试上一轮（回退后重发） |
 | `/remind <时间> <事由>` | 一次性提醒：+30m / +1h30m / 15:30 / 2026-11-20 15:30 |
+| `/schedule add <时间> <事由>` | 周期任务：每天 09:30 / 工作日 9:00 / 每周一 10:00 / 每月 1 号 09:00 / 原生 cron；`del <id>` 删、`list` 列（重启保留） |
+| `/status` | 当前会话状态（模式/模型/历史/后台任务数） |
+| `/model [名称]` | 查看/切换本会话模型 |
+| `/agents` · `/agent <名>` | 查看/切换本会话 agent（handoff；`/agent auto` 恢复路由） |
+| `/<agent名> <任务>` | 动态派发：任意已配置 agent 直接接活（如 `/reviewer 帮我审这段 diff`），后台执行、结果回本聊天 |
+| `/system [提示词]` | 查看/覆盖 system 提示词 |
+| `/skills` · `/skill <名> <指令>` | 列出 / 使用技能 |
+| `/flows` · `/flow <名> <输入>` | 列出 / 后台跑多步工作流 |
+| `/forms` · `/form <名>` | 列出 / 发送表单卡片（飞书） |
+
+群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
 
 ## 阻塞问答（ask）
 
@@ -102,13 +113,6 @@ chatmux ask -to feishu:oc_xxxx "部署走哪个方案？" -opt 方案A -opt 方�
 该聊天下一条有效回复即为答案（选项题只认选项）。CLI agent 里配好
 system 提示词即可把它当"问人工具"用。每个聊天同时只有一个待答问题，
 后问覆盖前问。
-| `/status` | 当前会话状态（模式/模型/历史/后台任务数） |
-| `/model [名称]` | 查看/切换本会话模型 |
-| `/agents` · `/agent <名>` | 查看/切换本会话 agent（handoff；`/agent auto` 恢复路由） |
-| `/system [提示词]` | 查看/覆盖 system 提示词 |
-| `/skills` · `/skill <名> <指令>` | 列出 / 使用技能 |
-| `/flows` · `/flow <名> <输入>` | 列出 / 后台跑多步工作流 |
-| `/forms` · `/form <名>` | 列出 / 发送表单卡片（飞书） |
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
 
@@ -149,15 +153,23 @@ Telegram 音频文件均支持。
 
 ## 定时任务
 
+配置态（重启不丢、随文件改）：
+
 ```json
 "cron": [{ "name": "standup", "schedule": "30 9 * * 1-5", "channel": "feishu", "chatId": "oc_xxxx", "text": "总结昨天进展" }]
 ```
+
+会话态：`/schedule add 每天 09:30 站会提醒`——聊天里直接建周期任务，
+存 `dataDir/schedules.json`，重启自动恢复；`/schedule list` 列出、
+`/schedule del <id>` 删除。时间短语支持 每天/工作日/每周末/每周一/每月 1 号
++ HH:MM，也接受原生 5 段 cron。
 
 ## 网页看板
 
 浏览器打开 `http://127.0.0.1:8080/`：通道健康、运行时与会话指标、后台任务
 列表、按 agent 的用量与 👍/👎 反馈统计，5 秒自动刷新（adminToken 输入一次
-存本地）。
+存本地）。看板含**会话板**（每会话锚点/名称/agent/消息数/忙闲）与
+**需要你回答**（ask 待答问题及挂起时间）两张表。
 
 ## 反馈按钮
 
@@ -233,6 +245,13 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.4.3（对齐循环第 3 轮）：动态派发 `/<agent名> <任务>`（任意已配置 agent
+直接接活，无需预定义命令）、会话态周期任务 /schedule（中文时间短语 + 原生
+cron，持久化恢复）、看板会话板与 ask 待答表、ask GET 鉴权修复。
+
+v0.4.2：阻塞问答 ask（`chatmux ask` + ❓ 表单卡片 + 文本回答回退，
+每聊天一问、后问覆盖前问）。
 
 v0.4.1（对照 botmux 盘点后的补差轮）：会话命名 /name、历史查看 /history、
 上下文回退 /rewind、重试 /retry、一次性提醒 /remind（相对/绝对时间）、
