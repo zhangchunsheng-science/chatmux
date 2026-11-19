@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,7 +39,9 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/channel/wecom"
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
 	"github.com/zhangchunsheng-science/chatmux/internal/cron"
+	"github.com/zhangchunsheng-science/chatmux/internal/mcp"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
+	"github.com/zhangchunsheng-science/chatmux/internal/session"
 	"github.com/zhangchunsheng-science/chatmux/internal/usage"
 )
 
@@ -56,8 +59,8 @@ func main() {
 
 func runClient(args []string, cfgPath string) int {
 	cmd := args[0]
-	if cmd != "status" && cmd != "stop" && cmd != "send" && cmd != "ask" {
-		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send|ask)\n", cmd)
+	if cmd != "status" && cmd != "stop" && cmd != "send" && cmd != "ask" && cmd != "mcp" {
+		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send|ask|mcp)\n", cmd)
 		return 2
 	}
 	// accept -config after the subcommand too: chatmux status -config x.json
@@ -179,6 +182,16 @@ func runClient(args []string, cfgPath string) int {
 		}
 		_ = json.Unmarshal(body, &out)
 		fmt.Println(out.Answer)
+	case "mcp":
+		// stdio MCP server proxying this gateway — register as
+		//   claude mcp add chatmux -- chatmux mcp -config chatmux.json
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		log.SetOutput(os.Stderr) // keep stdout protocol-clean
+		if err := mcp.New(base, token).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+			fmt.Fprintln(os.Stderr, "mcp:", err)
+			return 1
+		}
 	}
 	return 0
 }
@@ -462,6 +475,28 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 			return
 		}
 		writeJSON(w, aggs)
+	})
+	mux.HandleFunc("/admin/history", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !guard(w, r) {
+			return
+		}
+		limit := 20
+		if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+		msgs := rt.Sessions().Snapshot(session.Key{
+			Channel:  r.URL.Query().Get("channel"),
+			ChatID:   r.URL.Query().Get("chatId"),
+			ThreadID: r.URL.Query().Get("threadId"),
+		})
+		if len(msgs) > limit {
+			msgs = msgs[len(msgs)-limit:]
+		}
+		writeJSON(w, map[string]any{"messages": msgs, "count": len(msgs)})
 	})
 	mux.HandleFunc("/admin/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

@@ -101,6 +101,24 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
 
+## MCP 服务（被 Claude Code 等调用）
+
+chatmux 可作为 stdio MCP server 暴露给 MCP 客户端——botmux 供宿主
+agent 调用的那套面：
+
+```bash
+claude mcp add chatmux -- chatmux mcp -config /path/to/chatmux.json
+```
+
+注册后宿主 agent 获得 4 个工具：
+
+| 工具 | 作用 |
+| --- | --- |
+| `chatmux_send` | 发消息/文件进任意聊天 |
+| `chatmux_ask` | 向聊天提问并阻塞等真人回答（选项走表单卡片） |
+| `chatmux_status` | 网关健康快照（通道/运行时/agent） |
+| `chatmux_history` | 读某聊天最近对话（GET /admin/history） |
+
 ## 阻塞问答（ask）
 
 CLI agent 或运维在会话外向聊天提问并阻塞等答案——botmux ask 的对应件：
@@ -245,6 +263,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.4.4（对齐循环第 4 轮）：MCP 服务——`chatmux mcp` 以 stdio MCP server
+把 send/ask/status/history 暴露给 Claude Code 等 MCP 客户端
+（botmux 供宿主 agent 调用的对应面）；新增 GET /admin/history。
 
 v0.4.3（对齐循环第 3 轮）：动态派发 `/<agent名> <任务>`（任意已配置 agent
 直接接活，无需预定义命令）、会话态周期任务 /schedule（中文时间短语 + 原生

@@ -98,6 +98,9 @@ func (r *Runtime) SetUsageLogger(l *usage.Logger) { r.usage = l }
 // CLIRunner exposes the CLI-agent runner (for /new to reset resume ids).
 func (r *Runtime) CLIRunner() *cliagent.Runner { return r.cli }
 
+// Sessions exposes the session store (for /admin/history).
+func (r *Runtime) Sessions() *session.Store { return r.sessions }
+
 // Handle processes one inbound message. It never blocks the caller for
 // the whole model call: if a turn is already running the message is
 // queued as a follow-up for the next turn.
