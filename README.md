@@ -69,8 +69,10 @@ cp chatmux.json.example chatmux.json   # 填入你的通道凭据和模型 key
 }
 ```
 
-`type` 支持 `claude` / `codex` / `gemini` / `generic`（generic 需给 `bin`，
-可选 `promptArg`/`resumeFlag`；gemini 走 `gemini -p`，无原生 resume）。
+`type` 支持 `claude` / `codex` / `gemini` / `qwen` / `opencode` / `aider` /
+`generic`（generic 需给 `bin`，可选 `promptArg`/`resumeFlag`；gemini/qwen 走
+`-p`、opencode 走 `run`、aider 走 `--message`，均为 argv 提示词 + 纯文本
+输出，无原生 resume；claude/codex 走流式 JSON 并自动 resume）。
 API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider 换
 `baseUrl` 即接。
 
@@ -100,6 +102,13 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/forms` · `/form <名>` | 列出 / 发送表单卡片（飞书） |
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
+
+## 自更新
+
+```bash
+chatmux version   # v0.4.5 (darwin/arm64)
+chatmux update    # 拉 GitHub latest release 并原子替换自身
+```
 
 ## MCP 服务（被 Claude Code 等调用）
 
@@ -263,6 +272,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.4.5（对齐循环第 5 轮）：CLI 适配器扩展（qwen / opencode / aider 预设，
+argv 提示词 + 纯文本输出）+ 自更新（`chatmux version` / `chatmux update`，
+从 GitHub Releases 拉对应平台产物并原子替换，internal/version 单一版本源）。
 
 v0.4.4（对齐循环第 4 轮）：MCP 服务——`chatmux mcp` 以 stdio MCP server
 把 send/ask/status/history 暴露给 Claude Code 等 MCP 客户端

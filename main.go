@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,7 +43,9 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/mcp"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
+	"github.com/zhangchunsheng-science/chatmux/internal/update"
 	"github.com/zhangchunsheng-science/chatmux/internal/usage"
+	"github.com/zhangchunsheng-science/chatmux/internal/version"
 )
 
 func main() {
@@ -59,8 +62,28 @@ func main() {
 
 func runClient(args []string, cfgPath string) int {
 	cmd := args[0]
+	// version/update need no config file
+	switch cmd {
+	case "version":
+		fmt.Printf("chatmux v%s (%s/%s)\n", version.Version, runtime.GOOS, runtime.GOARCH)
+		return 0
+	case "update":
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		res, err := update.Apply(ctx)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "更新失败:", err)
+			return 1
+		}
+		if res.UpToDate {
+			fmt.Printf("已是最新版 v%s。\n", res.From)
+			return 0
+		}
+		fmt.Printf("已更新 v%s → v%s（重启 chatmux 生效）。\n", res.From, res.To)
+		return 0
+	}
 	if cmd != "status" && cmd != "stop" && cmd != "send" && cmd != "ask" && cmd != "mcp" {
-		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send|ask|mcp)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send|ask|mcp|version|update)\n", cmd)
 		return 2
 	}
 	// accept -config after the subcommand too: chatmux status -config x.json

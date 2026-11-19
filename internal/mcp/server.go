@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/zhangchunsheng-science/chatmux/internal/version"
 )
 
 const protocolVersion = "2024-11-05"
@@ -94,7 +96,7 @@ func (s *Server) handle(ctx context.Context, line string) *response {
 func (s *Server) dispatch(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, *rpcError) {
 	switch method {
 	case "initialize":
-		return json.RawMessage(`{"protocolVersion":"` + protocolVersion + `","capabilities":{"tools":{}},"serverInfo":{"name":"chatmux","version":"0.4.3"}}`), nil
+		return json.RawMessage(`{"protocolVersion":"` + protocolVersion + `","capabilities":{"tools":{}},"serverInfo":{"name":"chatmux","version":"` + version.Version + `"}}`), nil
 	case "ping":
 		return json.RawMessage(`{}`), nil
 	case "tools/list":

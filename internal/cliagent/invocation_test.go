@@ -62,3 +62,33 @@ func TestSandboxNetworkOverride(t *testing.T) {
 		t.Errorf("network override ignored: %v", args)
 	}
 }
+
+func TestBuildInvocationArgvPresets(t *testing.T) {
+	cases := []struct {
+		typ, model, wantBin, wantArgs string
+	}{
+		{"gemini", "gemini-2.0-flash", "gemini", "-p hi -m gemini-2.0-flash"},
+		{"qwen", "qwen3-coder-plus", "qwen", "-p hi -m qwen3-coder-plus"},
+		{"opencode", "claude-sonnet-5-5", "opencode", "run hi --model claude-sonnet-5-5"},
+		{"aider", "gpt-4o", "aider", "--yes-always --no-auto-commits --message hi --model gpt-4o"},
+	}
+	for _, c := range cases {
+		bin, args, stdin, err := buildInvocation(Config{Type: c.typ, Model: c.model}, "", "hi")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bin != c.wantBin || stdin {
+			t.Fatalf("%s: bin=%q stdin=%v", c.typ, bin, stdin)
+		}
+		got := strings.Join(args, " ")
+		if !strings.Contains(got, c.wantArgs) {
+			t.Errorf("%s: args %q missing %q", c.typ, got, c.wantArgs)
+		}
+	}
+}
+
+func TestBuildInvocationUnknownType(t *testing.T) {
+	if _, _, _, err := buildInvocation(Config{Type: "bogus"}, "", ""); err == nil {
+		t.Fatal("unknown type should error")
+	}
+}

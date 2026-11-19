@@ -91,7 +91,7 @@ func (r *Runner) Reset(anchor string) {
 
 // Config describes how to invoke one CLI.
 type Config struct {
-	Type       string `json:"type"`  // claude | codex | generic
+	Type       string `json:"type"`  // claude | codex | gemini | qwen | opencode | aider | generic
 	Bin        string `json:"bin"`   // executable; defaults per type
 	Model      string `json:"model"` // passed through when supported
 	WorkingDir string `json:"workingDir"`
@@ -147,6 +147,36 @@ func buildInvocation(cfg Config, resumeID, prompt string) (bin string, args []st
 		args = []string{"-p", prompt}
 		if cfg.Model != "" {
 			args = append(args, "-m", cfg.Model)
+		}
+	case "qwen":
+		// Qwen Code CLI (gemini-cli fork): same headless shape.
+		if bin == "" {
+			bin = "qwen"
+		}
+		promptViaStdin = false
+		args = []string{"-p", prompt}
+		if cfg.Model != "" {
+			args = append(args, "-m", cfg.Model)
+		}
+	case "opencode":
+		// opencode headless: `opencode run <prompt>`, plain text out.
+		if bin == "" {
+			bin = "opencode"
+		}
+		promptViaStdin = false
+		args = []string{"run", prompt}
+		if cfg.Model != "" {
+			args = append(args, "--model", cfg.Model)
+		}
+	case "aider":
+		// aider: one message per run, auto-accept, no git churn.
+		if bin == "" {
+			bin = "aider"
+		}
+		promptViaStdin = false
+		args = []string{"--yes-always", "--no-auto-commits", "--message", prompt}
+		if cfg.Model != "" {
+			args = append(args, "--model", cfg.Model)
 		}
 	case "generic":
 		if cfg.Bin == "" {
