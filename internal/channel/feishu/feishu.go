@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	larkdispatch "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkcallback "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -154,6 +155,18 @@ func (f *Feishu) Start(ctx context.Context, out chan<- channel.Message) error {
 		}).
 		OnP2CardActionTrigger(func(ctx context.Context, e *larkcallback.CardActionTriggerEvent) (*larkcallback.CardActionTriggerResponse, error) {
 			return f.handleCardAction(e)
+		}).
+		OnP2ChatMemberBotAddedV1(func(ctx context.Context, e *larkim.P2ChatMemberBotAddedV1) error {
+			if e != nil && e.Event != nil {
+				f.pumpMemberEvent(ctx, e.EventV2Base, deref(e.Event.ChatId), "bot_added")
+			}
+			return nil
+		}).
+		OnP2ChatMemberBotDeletedV1(func(ctx context.Context, e *larkim.P2ChatMemberBotDeletedV1) error {
+			if e != nil && e.Event != nil {
+				f.pumpMemberEvent(ctx, e.EventV2Base, deref(e.Event.ChatId), "bot_removed")
+			}
+			return nil
 		})
 
 	wsClient := larkws.NewClient(f.opts.AppID, f.opts.AppSecret,
@@ -163,6 +176,32 @@ func (f *Feishu) Start(ctx context.Context, out chan<- channel.Message) error {
 	wsClient.SetOnReconnecting(func() { f.setHealthy(false) })
 	wsClient.SetOnError(func(err error) { f.setHealthy(false) })
 	return wsClient.Start(ctx)
+}
+
+// pumpMemberEvent turns bot membership events (added/removed) into
+// synthetic messages so the runtime can greet or log.
+func (f *Feishu) pumpMemberEvent(ctx context.Context, base *larkevent.EventV2Base, chatID, kind string) {
+	eventID := ""
+	if base != nil && base.Header != nil {
+		eventID = base.Header.EventID
+	}
+	if !f.seen.Claim("member|" + kind + "|" + eventID) {
+		return
+	}
+	msg := channel.Message{
+		Channel: f.name, ChatID: chatID, ChatType: "group",
+		UserName: "event:" + kind, Event: kind, Timestamp: time.Now(),
+	}
+	f.mu.Lock()
+	pump := f.pump
+	f.mu.Unlock()
+	if pump != nil {
+		select {
+		case pump <- msg:
+		case <-ctx.Done():
+		case <-time.After(30 * time.Second):
+		}
+	}
 }
 
 func (f *Feishu) toMessage(e *larkim.P2MessageReceiveV1) (channel.Message, bool) {

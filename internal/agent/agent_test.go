@@ -456,3 +456,42 @@ func TestOncallCommand(t *testing.T) {
 	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/oncall next"}, &cfg.Agents[0], s3)
 	waitContains(t, s3, "李四")
 }
+
+func TestMemberEventWelcome(t *testing.T) {
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent: "default",
+	}
+	rt := NewRuntime(cfg, provider.NewRegistry(), map[string]channel.Channel{})
+	key := session.Key{Channel: "feishu", ChatID: "grp1"}
+	_ = key
+	s := &fakeSender{}
+	// wire senderFor: register a channel stub via chans map? Runtime uses
+	// r.chans[ msg.Channel ].SenderFor — inject a stub channel.
+	rt.chans["feishu"] = &stubChannel{sender: s}
+
+	rt.Handle(context.Background(), channel.Message{
+		Channel: "feishu", ChatID: "grp1", ChatType: "group",
+		Event: "bot_added", UserName: "event:bot_added",
+	})
+	waitContains(t, s, "chatmux 机器人")
+
+	rt.Handle(context.Background(), channel.Message{
+		Channel: "feishu", ChatID: "grp1", ChatType: "group",
+		Event: "bot_removed", UserName: "event:bot_removed",
+	})
+	// removal: no additional send (still exactly 1 message)
+	if n := len(s.sent); n != 1 {
+		t.Fatalf("bot_removed should not send, got %d msgs", n)
+	}
+}
+
+type stubChannel struct{ sender channel.Sender }
+
+func (c *stubChannel) Name() string { return "feishu" }
+func (c *stubChannel) Start(ctx context.Context, out chan<- channel.Message) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (c *stubChannel) SenderFor(channel.Message) (channel.Sender, error) { return c.sender, nil }
+func (c *stubChannel) Healthy() bool                                     { return true }

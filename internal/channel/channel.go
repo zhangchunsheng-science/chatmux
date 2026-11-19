@@ -47,7 +47,8 @@ type Message struct {
 	Quoted      *Quoted  // message this one replies to, if reported
 	Attachments []Attachment
 	Timestamp   time.Time
-	Raw         any // platform-native event, for adapters/debug only
+	Event       string // "" = chat message; "bot_added"/"bot_removed" = membership events
+	Raw         any    // platform-native event, for adapters/debug only
 }
 
 // SendOptions tweak an outbound message.

@@ -38,6 +38,8 @@ type Config struct {
 	DocWatch []DocWatchConfig `json:"docwatch,omitempty"`
 	// Oncall rotates duty members (/oncall + shift-handover notices).
 	Oncall *OncallConfig `json:"oncall,omitempty"`
+	// GroupWelcome overrides the bot_added greeting text (i18n default).
+	GroupWelcome string `json:"groupWelcome,omitempty"`
 }
 
 // OncallConfig is a duty rotation: members cycle daily or weekly from

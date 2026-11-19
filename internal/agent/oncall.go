@@ -3,11 +3,31 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"time"
 
+	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/oncall"
+	"github.com/zhangchunsheng-science/chatmux/internal/usage"
 )
+
+// handleMemberEvent reacts to bot_added/bot_removed membership events:
+// welcome on join, quiet log on leave (botmux group suite's greeting).
+func (r *Runtime) handleMemberEvent(msg channel.Message) {
+	sender, err := r.senderFor(msg)
+	if err != nil {
+		return
+	}
+	if msg.Event == "bot_added" {
+		text := firstNonEmpty(r.cfg.GroupWelcome, r.say("group.welcome"))
+		_, _ = sender.Send(context.Background(), text, channel.SendOptions{Final: true})
+	}
+	// bot_removed: nothing to send (we're out of the chat) — usage trace only
+	if r.usage != nil {
+		r.usage.Log(usage.Record{Agent: "event", Mode: "group:" + msg.Event, Channel: msg.Channel, ChatID: msg.ChatID})
+	}
+}
 
 // handleOncallCommand renders /oncall [/next].
 func (r *Runtime) handleOncallCommand(reply func(string), sub string) {

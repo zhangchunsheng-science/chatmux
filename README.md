@@ -162,6 +162,10 @@ system 提示词即可把它当"问人工具"用。每个聊天同时只有一�
 
 群聊默认需要 @机器人 才响应（agent 可配 `"groupMention": false` 关闭）。
 
+**群事件**：机器人被拉进飞书群（im.chat.member.bot.added）自动发欢迎语
+（配置 `groupWelcome` 可覆盖默认文案，不配置则用 i18n 默认）；被移出群
+只记 usage 事件不打扰。
+
 ## 引用上下文
 
 回复别人的消息时，被引内容自动注入模型上下文（`[引用 老王 的消息]…`）。
@@ -316,6 +320,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.1（对齐循环第 11 轮）：群套件起步——飞书机器人进群事件
+（im.chat.member.bot.added）自动欢迎语（groupWelcome 可覆盖），
+移出群记 usage 事件；channel.Message 新增 Event 字段。
 
 v0.5.0（对齐循环第 10 轮）：oncall 值班——配置 members + daily/weekly
 轮换 + anchor 起算，/oncall 与 /oncall next 查询，每天 00:05 自动检查
