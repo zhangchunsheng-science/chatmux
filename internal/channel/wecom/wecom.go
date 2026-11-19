@@ -123,6 +123,7 @@ type cbPlain struct {
 	AgentID      int      `xml:"AgentID"`
 	Event        string   `xml:"Event"`
 	ChangeType   string   `xml:"ChangeType"`
+	UpdateDetail string   `xml:"UpdateDetail"`
 	MsgID        string   `xml:"MsgId"`
 	// async ack of our sends (later versions): ignore
 }
@@ -167,6 +168,23 @@ func (w *WeCom) serveCallback(rw http.ResponseWriter, r *http.Request) {
 	_, _ = rw.Write([]byte("success"))
 
 	if !w.seen.Claim(p.MsgID + "|" + p.FromUserName + "|" + fmt.Sprint(p.CreateTime)) {
+		return
+	}
+	if p.MsgType == "event" {
+		// system callbacks (FromUserName=sys) bypass the user allowlist
+		if msg, ok := w.toEventMessage(p); ok {
+			w.mu.Lock()
+			pump := w.pump
+			w.mu.Unlock()
+			if pump != nil {
+				go func() {
+					select {
+					case pump <- msg:
+					case <-time.After(30 * time.Second):
+					}
+				}()
+			}
+		}
 		return
 	}
 	if len(w.opts.AllowUsers) > 0 && !contains(w.opts.AllowUsers, p.FromUserName) {
@@ -216,6 +234,43 @@ func (w *WeCom) toMessage(p cbPlain) channel.Message {
 		})
 	}
 	return msg
+}
+
+// toEventMessage maps WeCom chat-change callbacks (change_external_chat /
+// chat.update) to synthetic member events. WeCom self-built apps have no
+// "bot added to group" callback of their own — what the platform reports
+// is the external-chat lifecycle — so these stay usage-log events; the
+// feishu/dingtalk/telegram join-welcome does not apply here.
+func (w *WeCom) toEventMessage(p cbPlain) (channel.Message, bool) {
+	if p.Event != "change_external_chat" && p.Event != "chat.update" {
+		return channel.Message{}, false
+	}
+	if p.ChatID == "" {
+		return channel.Message{}, false
+	}
+	ev := "group_updated"
+	switch p.ChangeType {
+	case "create":
+		ev = "group_created"
+	case "dismiss":
+		ev = "group_disbanded"
+	case "update":
+		switch p.UpdateDetail {
+		case "add_member":
+			ev = "member_added"
+		case "del_member":
+			ev = "member_removed"
+		}
+	}
+	return channel.Message{
+		ID:        fmt.Sprintf("evt-%d-%s", p.CreateTime, p.ChangeType),
+		Channel:   w.name,
+		ChatID:    p.ChatID,
+		ChatType:  "group",
+		UserID:    p.FromUserName,
+		Event:     ev,
+		Timestamp: time.Unix(p.CreateTime, 0),
+	}, true
 }
 
 func contains(xs []string, v string) bool {

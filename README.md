@@ -167,7 +167,8 @@ system 提示词即可把它当"问人工具"用。每个聊天同时只有一�
 列表含 `robotCode`/`botUserId`）自动发欢迎语（配置 `groupWelcome` 可覆盖
 默认文案，不配置则用 i18n 默认；钉钉欢迎走主动消息 API，需配 robotCode）；
 被移出群（deleted / kicked / left / chat_remove_member）只记 usage 事件
-不打扰。
+不打扰。企微没有机器人进群回调，客户群变更（change_external_chat：
+建群/解散/成员进出）同样记 usage 事件。
 
 ## 引用上下文
 
@@ -309,7 +310,7 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 |---|---|---|---|
 | 飞书 | WebSocket 长连接（默认）或 webhook | 企业自建应用 + 机器人能力 + `im.message.receive_v1` 订阅 + 长连接模式 | ✅ 卡片 PATCH |
 | 钉钉 | Stream Mode（官方 SDK） | 企业内部机器人 + Stream 模式开启；群事件需在开放平台订阅 chat_add_member / chat_remove_member / chat_disband，并配 `robotCode`（或 `botUserId`）以识别机器人自身 | ❌（sessionWebhook 仅整条发送） |
-| 企业微信 | HTTP 回调（需公网可达 URL） | 自建应用 + 接收消息回调配置；AES 加解密按官方规范实现 | ❌ |
+| 企业微信 | HTTP 回调（需公网可达 URL） | 自建应用 + 接收消息回调配置；AES 加解密按官方规范实现；群事件走客户群变更回调（change_external_chat，仅记事件） | ❌ |
 | Telegram | 长轮询（无需公网） | @BotFather token | ✅ editMessageText |
 | Slack | Socket Mode（无需公网） | xoxb + xapp token，订阅 message/app_mention 事件 | ✅ chat.update |
 | Discord | Gateway WS（无需公网） | Bot token + Message Content Intent | ✅ PATCH message |
@@ -325,6 +326,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.5（对齐循环第 15 轮）：企微群事件——change_external_chat / chat.update
+回调映射（create→建群、dismiss→解散、update+add/del_member→成员进出），
+系统事件绕过用户白名单，全部记 usage。企微自建应用没有"机器人进群"回调，
+平台能给的只有客户群生命周期，故此通道不加入欢迎语逻辑（如实按平台能力对齐）。
 
 v0.5.4（对齐循环第 14 轮）：钉钉群事件对齐——Stream Mode 增订群会话事件
 （chat_add/remove_member、chat_disband），机器人进出群按 robotCode /
