@@ -131,5 +131,15 @@
         { "name": "sev", "label": "严重程度", "type": "select", "options": ["低", "中", "高"] }
       ]
     }
+  ],
+  "docwatch": [
+    {
+      "name": "plan",
+      "path": "docs/plan.md",
+      "intervalSec": 60,
+      "channel": "feishu",
+      "chatId": "oc_xxxx",
+      "prompt": "计划文档有更新，请总结变更并提醒相关事项：\n{{diff}}"
+    }
   ]
 }

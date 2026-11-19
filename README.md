@@ -191,6 +191,19 @@ Telegram 音频文件均支持。
 `/schedule del <id>` 删除。时间短语支持 每天/工作日/每周末/每周一/每月 1 号
 + HH:MM，也接受原生 5 段 cron。
 
+## 文档监视（docwatch）
+
+本地文档一变，agent 就被叫起来看：
+
+```json
+"docwatch": [{ "name": "plan", "path": "docs/plan.md", "intervalSec": 60,
+  "channel": "feishu", "chatId": "oc_xxxx",
+  "prompt": "计划文档有更新，请总结变更：\n{{diff}}" }]
+```
+
+首次只记基线不触发；之后每次变更产出 +/- 行级差异摘录（上限可配长度，
+LCS 行 diff）注入 `{{diff}}`，其余占位符 `{{name}}` `{{path}}`。
+
 ## 网页看板
 
 浏览器打开 `http://127.0.0.1:8080/`：通道健康、运行时与会话指标、后台任务
@@ -273,6 +286,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.4.7（对齐循环第 7 轮）：文档监视 docwatch——本地文件变更检测
+（LCS 行 diff + 摘录上限），变更即以 {{diff}} 触发 agent 提示词，
+首见只记基线。
 
 v0.4.6（对齐循环第 6 轮）：网页会话终端——看板内置聊天面板（web 通道：
 POST /admin/chat 进、GET /admin/chat?since= 增量轮询出、Replace 原地更新

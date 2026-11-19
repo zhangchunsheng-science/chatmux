@@ -41,6 +41,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/channel/wecom"
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
 	"github.com/zhangchunsheng-science/chatmux/internal/cron"
+	"github.com/zhangchunsheng-science/chatmux/internal/docwatch"
 	"github.com/zhangchunsheng-science/chatmux/internal/mcp"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
@@ -395,6 +396,23 @@ func runServer(cfgPath string) int {
 	}
 	sched.Start(ctx)
 	rt.SetScheduler(sched, ctx) // /schedule command + persisted user schedules
+
+	// ---- doc watchers ----
+	if len(cfg.DocWatch) > 0 {
+		byName := map[string]config.DocWatchConfig{}
+		for _, e := range cfg.DocWatch {
+			byName[e.Name] = e
+			log.Printf("docwatch %s @ %s (every %ds) → %s:%s", e.Name, e.Path, e.IntervalSec, e.Channel, e.ChatID)
+		}
+		docwatch.New(cfg.DocWatch, func(name, prompt string) {
+			e := byName[name]
+			rt.Handle(context.Background(), channel.Message{
+				Channel: e.Channel, ChatID: e.ChatID, ThreadID: e.ThreadID,
+				ChatType: "p2p", MentionedMe: true,
+				UserName: "docwatch:" + name, Text: prompt,
+			})
+		}).Start(ctx)
+	}
 
 	// ---- admin endpoints ----
 	started := time.Now()

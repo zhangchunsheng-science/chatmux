@@ -34,6 +34,21 @@ type Config struct {
 	I18n *I18nConfig `json:"i18n,omitempty"`
 	// Forms are card forms users fill in-chat via /form (feishu).
 	Forms []FormConfig `json:"forms,omitempty"`
+	// DocWatch watches local documents and fires prompts on change.
+	DocWatch []DocWatchConfig `json:"docwatch,omitempty"`
+}
+
+// DocWatchConfig is one watched document: when the file's content
+// changes, Prompt fires into the chat ({{diff}} = line diff excerpt).
+type DocWatchConfig struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	IntervalSec int    `json:"intervalSec,omitempty"` // default 60, min 5
+	Channel     string `json:"channel"`
+	ChatID      string `json:"chatId"`
+	ThreadID    string `json:"threadId,omitempty"`
+	Prompt      string `json:"prompt"`
+	Agent       string `json:"agent,omitempty"` // route override
 }
 
 // FormConfig is one named card form: /form <name> posts the card,
