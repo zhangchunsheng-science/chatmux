@@ -34,21 +34,22 @@ type Quoted struct {
 // Message is the normalized inbound chat message, produced by every
 // channel adapter and consumed by the router/agent runtime.
 type Message struct {
-	ID          string   // platform message id (for reply/quote/react)
-	Channel     string   // channel name, e.g. "feishu"
-	ChatID      string   // conversation id, stable per chat/group
-	ChatType    string   // "p2p" | "group"
-	ThreadID    string   // thread/topic root id, "" for flat chats
-	UserID      string   // sender id on the platform
-	UserName    string   // display name, best effort
-	Text        string   // normalized plain text, mentions stripped
-	MentionedMe bool     // true if the bot was @-mentioned
-	AtUserIDs   []string // user ids @-mentioned in the text (excluding me)
-	Quoted      *Quoted  // message this one replies to, if reported
-	Attachments []Attachment
-	Timestamp   time.Time
-	Event       string // "" = chat message; "bot_added"/"bot_removed" = membership events
-	Raw         any    // platform-native event, for adapters/debug only
+	ID            string   // platform message id (for reply/quote/react)
+	Channel       string   // channel name, e.g. "feishu"
+	ChatID        string   // conversation id, stable per chat/group
+	ChatType      string   // "p2p" | "group"
+	ThreadID      string   // thread/topic root id, "" for flat chats
+	ThreadIsTopic bool     // ThreadID is a forum topic id (telegram forums): replies must target the topic
+	UserID        string   // sender id on the platform
+	UserName      string   // display name, best effort
+	Text          string   // normalized plain text, mentions stripped
+	MentionedMe   bool     // true if the bot was @-mentioned
+	AtUserIDs     []string // user ids @-mentioned in the text (excluding me)
+	Quoted        *Quoted  // message this one replies to, if reported
+	Attachments   []Attachment
+	Timestamp     time.Time
+	Event         string // "" = chat message; "bot_added"/"bot_removed" = membership events
+	Raw           any    // platform-native event, for adapters/debug only
 }
 
 // SendOptions tweak an outbound message.

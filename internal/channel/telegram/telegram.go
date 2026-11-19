@@ -164,8 +164,10 @@ type tgUpdate struct {
 				FirstName string `json:"first_name"`
 			} `json:"from"`
 		} `json:"reply_to_message"`
-		Text     string `json:"text"`
-		Caption  string `json:"caption"`
+		// forum supergroup topic this message was posted in
+		MessageThreadID int64  `json:"message_thread_id"`
+		Text            string `json:"text"`
+		Caption         string `json:"caption"`
 		Entities []struct {
 			Type   string `json:"type"`
 			Offset int    `json:"offset"`
@@ -316,6 +318,13 @@ func (t *Telegram) toMessage(u tgUpdate) (channel.Message, bool) {
 			msg.Quoted = q
 		}
 	}
+	// forum topic wins over reply-derived thread: in a forum supergroup
+	// every message carries message_thread_id (its topic) — that's the
+	// stable per-topic session key, and replies must land back in it
+	if m.MessageThreadID != 0 {
+		msg.ThreadID = strconv.FormatInt(m.MessageThreadID, 10)
+		msg.ThreadIsTopic = true
+	}
 	// mention stripping: entities carry bot_command/mention offsets over
 	// UTF-16 code units — strip leading commands only, keep it simple.
 	for _, e := range m.Entities {
@@ -427,12 +436,17 @@ func (t *Telegram) setHealthy(ok bool, err error) {
 // ---- outbound ----
 
 type Sender struct {
-	t      *Telegram
-	chatID string
+	t       *Telegram
+	chatID  string
+	topicID string // forum topic id: sendMessage message_thread_id
 }
 
 func (t *Telegram) SenderFor(msg channel.Message) (channel.Sender, error) {
-	return &Sender{t: t, chatID: msg.ChatID}, nil
+	s := &Sender{t: t, chatID: msg.ChatID}
+	if msg.ThreadIsTopic && msg.ThreadID != "" {
+		s.topicID = msg.ThreadID // forum replies must land in the topic
+	}
+	return s, nil
 }
 
 const telegramMaxLen = 4000
@@ -445,6 +459,9 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 		body := map[string]any{
 			"chat_id": s.chatID,
 			"text":    c,
+		}
+		if s.topicID != "" {
+			body["message_thread_id"] = mustInt(s.topicID)
 		}
 		if opts.ReplyTo != "" && i == 0 {
 			body["reply_to_message_id"] = mustInt(opts.ReplyTo)
@@ -504,6 +521,9 @@ func (s *Sender) SendFile(ctx context.Context, path, caption string) (string, er
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	_ = w.WriteField("chat_id", s.chatID)
+	if s.topicID != "" {
+		_ = w.WriteField("message_thread_id", s.topicID)
+	}
 	if caption != "" {
 		_ = w.WriteField("caption", truncate(caption, 1000))
 	}

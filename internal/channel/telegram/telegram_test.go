@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -35,5 +36,34 @@ func TestSplitPrefersNewline(t *testing.T) {
 func TestExpandMentionsSlackStyle(t *testing.T) { // sanity that helper exists
 	if displayName(nil) != "?" {
 		t.Fatal("nil user name")
+	}
+}
+
+func TestForumTopicMapping(t *testing.T) {
+	tg := &Telegram{name: "tg"}
+	var uu tgUpdate
+	err := json.Unmarshal([]byte(`{"update_id":1,"message":{"message_id":10,"from":{"id":7},"chat":{"id":99,"type":"supergroup"},"message_thread_id":42,"text":"话题内消息","reply_to_message":{"message_id":9,"text":"被回复的"}}}`), &uu)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, ok := tg.toMessage(uu)
+	if !ok {
+		t.Fatal("forum message should map")
+	}
+	if msg.ThreadID != "42" || !msg.ThreadIsTopic {
+		t.Fatalf("want topic 42 flagged, got %q topic=%v", msg.ThreadID, msg.ThreadIsTopic)
+	}
+	if msg.Quoted == nil || msg.Quoted.ID != "9" {
+		t.Fatalf("quoted context should survive: %+v", msg.Quoted)
+	}
+
+	// non-forum reply keeps reply-derived ThreadID, unflagged
+	var u2 tgUpdate
+	if err := json.Unmarshal([]byte(`{"message":{"message_id":11,"from":{"id":7},"chat":{"id":99,"type":"group"},"text":"普通群回复","reply_to_message":{"message_id":3,"text":"原消息"}}}`), &u2); err != nil {
+		t.Fatal(err)
+	}
+	m2, ok := tg.toMessage(u2)
+	if !ok || m2.ThreadID != "3" || m2.ThreadIsTopic {
+		t.Fatalf("non-forum reply: ok=%v thread=%q topic=%v", ok, m2.ThreadID, m2.ThreadIsTopic)
 	}
 }

@@ -174,7 +174,8 @@ system 提示词即可把它当"问人工具"用。每个聊天同时只有一�
 
 回复别人的消息时，被引内容自动注入模型上下文（`[引用 老王 的消息]…`）。
 飞书（回复消息）、Telegram、Discord、Slack（线程跟帖）均已接；飞书话题群
-内跟帖不算引用，走话题锚点会话。
+内跟帖不算引用，走话题锚点会话；Telegram 论坛超群按 message_thread_id
+（话题）隔离会话，回复自动落回原话题。
 
 ## 语音转写
 
@@ -326,6 +327,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.5.6（对齐循环第 16 轮）：Telegram 话题群——论坛超群 message_thread_id
+作为话题会话键（优先于回复派生的 ThreadID），回复/文件自动带回
+message_thread_id 落回原话题；channel.Message 新增 ThreadIsTopic 标记。
 
 v0.5.5（对齐循环第 15 轮）：企微群事件——change_external_chat / chat.update
 回调映射（create→建群、dismiss→解散、update+add/del_member→成员进出），
