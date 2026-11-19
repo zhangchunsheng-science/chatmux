@@ -168,7 +168,7 @@ type tgUpdate struct {
 		MessageThreadID int64  `json:"message_thread_id"`
 		Text            string `json:"text"`
 		Caption         string `json:"caption"`
-		Entities []struct {
+		Entities        []struct {
 			Type   string `json:"type"`
 			Offset int    `json:"offset"`
 			Length int    `json:"length"`
