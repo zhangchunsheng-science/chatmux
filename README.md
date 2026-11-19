@@ -84,6 +84,11 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/jobs` | 列出后台任务 |
 | `/stop [bg\|任务id]` | 打断前台 / 后台任务 |
 | `/new` | 全新会话（清历史 + 清 CLI resume） |
+| `/name <名>` | 给会话命名（/status 与看板显示） |
+| `/history [轮数]` | 查看本会话最近对话 |
+| `/rewind [轮数]` | 回退上下文（模型忘记最近 N 轮，聊天记录不动） |
+| `/retry` | 重试上一轮（回退后重发） |
+| `/remind <时间> <事由>` | 一次性提醒：+30m / +1h30m / 15:30 / 2026-11-20 15:30 |
 | `/status` | 当前会话状态（模式/模型/历史/后台任务数） |
 | `/model [名称]` | 查看/切换本会话模型 |
 | `/system [提示词]` | 查看/覆盖 system 提示词 |
@@ -173,9 +178,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - `GET /healthz` — 存活/降级探测（任一通道断开即 503）
 - `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
   每 agent 调用数与 token、👍/👎 总量、uptime
-- `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）
-- 客户端：`chatmux status|stop|send -to channel:chatId 文本`（`-config`
-  可放子命令后）
+- `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）；
+  `/admin/send` 带可选 `file` 字段即上传宿主文件到聊天（飞书/Telegram/
+  Discord/Slack 支持，图片自动按照片/图片发）
+- 客户端：`chatmux status|stop|send -to channel:chatId [-file 路径] 文本`
+  （`-config` 可放子命令后）
 
 会话与 CLI resume id 分别快照到 `dataDir/sessions.json` /
 `dataDir/cli-sessions.json`（原子写），重启不丢上下文；回复语言用
@@ -213,7 +220,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
-v0.4：v0.3 全量 + 多平台 👍/👎 按钮（飞书/TG/Discord/Slack）+ 飞书卡片表单
+v0.4.1（对照 botmux 盘点后的补差轮）：会话命名 /name、历史查看 /history、
+上下文回退 /rewind、重试 /retry、一次性提醒 /remind（相对/绝对时间）、
+发文件到聊天（feishu/TG/Discord/Slack，图片内联，`/admin/send file` 与
+`chatmux send --file`）。
+
+v0.4：多平台 👍/👎 按钮（飞书/TG/Discord/Slack）+ 飞书卡片表单
 （forms[] + /form）+ CLI 沙箱（docker 隔离）+ 会话持久化（重启不丢）+ i18n
 （zh/en）+ Prometheus /metrics + 多实例通道（同名平台多账号，去重按实例隔离）+
 部署化（Dockerfile / CI / tag 发布 / systemd / launchd）。

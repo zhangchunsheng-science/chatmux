@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -452,6 +455,77 @@ func (s *Sender) Replace(ctx context.Context, msgID, text string) error {
 		OK bool `json:"ok"`
 	}
 	return s.t.call(ctx, "editMessageText", body, &res)
+}
+
+// SendFile posts a local file: images go as photos (inlined), the rest
+// as documents. Caption rides on the same message.
+func (s *Sender) SendFile(ctx context.Context, path, caption string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	method, field := "sendDocument", "document"
+	if isImagePath(path) {
+		method, field = "sendPhoto", "photo"
+	}
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	_ = w.WriteField("chat_id", s.chatID)
+	if caption != "" {
+		_ = w.WriteField("caption", truncate(caption, 1000))
+	}
+	part, err := w.CreateFormFile(field, filepath.Base(path))
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return "", err
+	}
+	_ = w.Close()
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("%s/bot%s/%s", s.t.opts.APIBase, s.t.opts.Token, method), &b)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := s.t.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var out struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", err
+	}
+	if !out.OK {
+		return "", fmt.Errorf("telegram %s: %s", method, out.Description)
+	}
+	return strconv.FormatInt(out.Result.MessageID, 10), nil
+}
+
+func isImagePath(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
+		return true
+	}
+	return false
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func (s *Sender) React(ctx context.Context, msgID, emoji string) error {

@@ -18,6 +18,7 @@ type persistedSession struct {
 	History []provider.Msg `json:"history"`
 	System  string         `json:"system,omitempty"`
 	Model   string         `json:"model,omitempty"`
+	Title   string         `json:"title,omitempty"`
 }
 
 // Save snapshots all sessions atomically (tmp + rename).
@@ -35,7 +36,7 @@ func (s *Store) Save(dataDir string) error {
 		if strings.Contains(k.ChatID, "|job") {
 			continue
 		}
-		out[k.String()] = persistedSession{History: sess.History, System: sess.System, Model: sess.Model}
+		out[k.String()] = persistedSession{History: sess.History, System: sess.System, Model: sess.Model, Title: sess.Title}
 	}
 	s.mu.Unlock()
 	b, err := json.Marshal(out)
@@ -70,7 +71,7 @@ func LoadSessions(dataDir string) *Store {
 		if !ok {
 			continue
 		}
-		s.byKey[k] = &Session{Key: k, History: ps.History, System: ps.System, Model: ps.Model}
+		s.byKey[k] = &Session{Key: k, History: ps.History, System: ps.System, Model: ps.Model, Title: ps.Title}
 	}
 	return s
 }

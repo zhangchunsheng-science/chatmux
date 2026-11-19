@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -144,6 +147,71 @@ func (a *api) do(req *http.Request, out any) error {
 		return json.Unmarshal(b, out)
 	}
 	return nil
+}
+
+// uploadFile posts a local file to im/v1/images (image_type=message) or
+// im/v1/files (file_type=stream) and returns the resource key.
+func (a *api) uploadFile(ctx context.Context, path string, isImage bool) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	endpoint, fileField, fileType := "/open-apis/im/v1/files", "file", "stream"
+	if isImage {
+		endpoint, fileField, fileType = "/open-apis/im/v1/images", "image", "message"
+	}
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	_ = w.WriteField("image_type", fileType) // images want image_type
+	_ = w.WriteField("file_type", fileType)  // files want file_type
+	part, err := w.CreateFormFile(fileField, filepath.Base(path))
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return "", err
+	}
+	_ = w.Close()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", a.base+endpoint+"?user_id_type=open_id", &b)
+	if err != nil {
+		return "", err
+	}
+	tok, err := a.tenantToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("feishu upload %s: %s %s", endpoint, resp.Status, truncate(string(body), 300))
+	}
+	var out struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			ImageKey string `json:"image_key"`
+			FileKey  string `json:"file_key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", err
+	}
+	if out.Code != 0 {
+		return "", fmt.Errorf("feishu upload: code=%d msg=%s", out.Code, out.Msg)
+	}
+	if out.Data.ImageKey != "" {
+		return out.Data.ImageKey, nil
+	}
+	return out.Data.FileKey, nil
 }
 
 // download fetches a binary resource (im/v1/images/:key) and returns the

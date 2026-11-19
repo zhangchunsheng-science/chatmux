@@ -109,14 +109,18 @@ func runClient(args []string, cfgPath string) int {
 	case "send":
 		fs := flag.NewFlagSet("send", flag.ExitOnError)
 		to := fs.String("to", "", "channel:chatId[:threadId]")
+		file := fs.String("file", "", "local file to upload (optional, caption = 文本)")
 		fs.Parse(rest)
 		text := strings.Join(fs.Args(), " ")
-		if *to == "" || text == "" {
-			fmt.Fprintln(os.Stderr, `usage: chatmux send -to channel:chatId[:threadId] 文本`)
+		if *to == "" || (text == "" && *file == "") {
+			fmt.Fprintln(os.Stderr, `usage: chatmux send -to channel:chatId[:threadId] [-file 路径] 文本`)
 			return 2
 		}
 		parts := strings.SplitN(*to, ":", 3)
 		payload := map[string]string{"channel": parts[0], "chatId": parts[1], "text": text}
+		if *file != "" {
+			payload["file"] = *file
+		}
 		if len(parts) == 3 {
 			payload["threadId"] = parts[2]
 		}
@@ -415,6 +419,7 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 			ChatID   string `json:"chatId"`
 			ThreadID string `json:"threadId"`
 			Text     string `json:"text"`
+			File     string `json:"file"` // optional local path on the chatmux host
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -425,6 +430,28 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte("unknown channel"))
+			return
+		}
+		if req.File != "" {
+			fs, ferr := ch.SenderFor(channel.Message{ChatID: req.ChatID, ThreadID: req.ThreadID})
+			if ferr != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(ferr.Error()))
+				return
+			}
+			uf, ok := fs.(channel.FileSender)
+			if !ok {
+				w.WriteHeader(http.StatusNotImplemented)
+				_, _ = w.Write([]byte("channel does not support file upload"))
+				return
+			}
+			id, err := uf.SendFile(r.Context(), req.File, req.Text)
+			if err != nil {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+			writeJSON(w, map[string]string{"fileId": id})
 			return
 		}
 		sender, err := ch.SenderFor(channel.Message{ChatID: req.ChatID, ThreadID: req.ThreadID})

@@ -91,6 +91,12 @@ type FormField struct {
 	Required    *bool    `json:"required,omitempty"`
 }
 
+// FileSender is a Sender that can upload a local file from the chatmux
+// host into the chat (operator/agent → IM direction, botmux send --file).
+type FileSender interface {
+	SendFile(ctx context.Context, path, caption string) (string, error)
+}
+
 // FormSender is a Sender whose platform supports interactive form
 // cards. Submitting the form feeds a synthetic message back into the
 // runtime with the collected values.

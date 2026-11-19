@@ -22,6 +22,19 @@ var zh = dict{
 	"jobs.header":      "后台任务：",
 	"jobs.line":        "· %s [%s] %s — 已跑 %s（/stop %s 停止）",
 	"new.done":         "已开启新会话。",
+	"name.cur":         "当前会话名: %s\n用法: /name <新名字> 重命名（仅本会话标识，不改群名）",
+	"name.set":         "会话已命名: %s",
+	"history.none":     "本会话还没有历史（/new 之后重新累计）。",
+	"history.header":   "最近 %d 轮对话：",
+	"history.line":     "· %s: %s\n  ↳ %s",
+	"history.tail":     "· %s: %s（未回复）",
+	"rewind.usage":     "用法: /rewind [轮数] — 回退上下文，默认 1 轮（不删聊天记录，只影响模型记忆）",
+	"rewind.done":      "已回退 %d 轮，剩余历史 %d 条。",
+	"retry.none":       "没有可重试的对话（先正常聊一轮）。",
+	"remind.usage":     "用法: /remind <时间> <事由> — 时间支持 +30m / +1h30m / 15:30 / 2026-11-20 15:30",
+	"remind.bad":       "看不懂这个时间：%s（支持 +30m / +1h30m / 15:30 / 2026-11-20 15:30）",
+	"remind.set":       "⏰ 已设提醒：%s（%s 后）",
+	"remind.fire":      "⏰ 提醒（%s 前设置）：%s",
 	"status.fmt":       "chatmux %s · 会话 %s · 模式 %s · 模型 %s · 历史 %d 条 · 后台任务 %d 个",
 	"status.busy":      "处理中",
 	"status.idle":      "空闲",
@@ -65,6 +78,10 @@ var zh = dict{
 		"/bg <任务> — 丢后台跑，会话不被占用\n" +
 		"/jobs — 列出后台任务\n" +
 		"/new — 开启全新会话（清历史/CLI 会话）\n" +
+		"/name <名> — 给会话命名（看板/状态里显示）\n" +
+		"/history [轮数] — 查看本会话最近对话\n" +
+		"/rewind [轮数] · /retry — 回退上下文 / 重试上一轮\n" +
+		"/remind <时间> <事由> — 一次性提醒（+30m / 15:30 / 2026-11-20 15:30）\n" +
 		"/status — 查看当前会话状态\n" +
 		"/model [名称] — 查看/切换模型\n" +
 		"/system [提示词] — 查看/覆盖 system 提示词\n" +
@@ -89,6 +106,19 @@ var en = dict{
 	"jobs.header":      "Background jobs:",
 	"jobs.line":        "· %s [%s] %s — running %s (/stop %s)",
 	"new.done":         "New session started.",
+	"name.cur":         "Session name: %s\nUsage: /name <new-name> (labels this session only)",
+	"name.set":         "Session named: %s",
+	"history.none":     "No history yet in this session (counts from /new).",
+	"history.header":   "Last %d exchanges:",
+	"history.line":     "· %s: %s\n  ↳ %s",
+	"history.tail":     "· %s: %s (unanswered)",
+	"rewind.usage":     "Usage: /rewind [n] — roll context back n exchanges (default 1; chat log stays, model memory shrinks)",
+	"rewind.done":      "Rewound %d exchange(s), %d messages left.",
+	"retry.none":       "Nothing to retry (chat one turn first).",
+	"remind.usage":     "Usage: /remind <time> <note> — time as +30m / +1h30m / 15:30 / 2026-11-20 15:30",
+	"remind.bad":       "Can't parse that time: %s (try +30m / +1h30m / 15:30 / 2026-11-20 15:30)",
+	"remind.set":       "⏰ Reminder set: %s (in %s)",
+	"remind.fire":      "⏰ Reminder (set %s ago): %s",
 	"status.fmt":       "chatmux %s · session %s · mode %s · model %s · history %d · bg jobs %d",
 	"status.busy":      "busy",
 	"status.idle":      "idle",
@@ -132,6 +162,10 @@ var en = dict{
 		"/bg <task> — run detached, chat stays free\n" +
 		"/jobs — list background jobs\n" +
 		"/new — fresh session (history + CLI resume)\n" +
+		"/name <label> — name this session (shows in status)\n" +
+		"/history [n] — recent exchanges of this session\n" +
+		"/rewind [n] · /retry — roll back context / retry last turn\n" +
+		"/remind <time> <note> — one-shot reminder (+30m / 15:30 / 2026-11-20 15:30)\n" +
 		"/status — session status\n" +
 		"/model [name] — show/switch model\n" +
 		"/system [prompt] — show/override system prompt\n" +

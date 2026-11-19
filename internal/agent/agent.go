@@ -288,6 +288,92 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		r.cli.Reset(key.String())
 		r.persistSessions()
 		reply(r.say("new.done"))
+	case "/name":
+		if arg == "" {
+			sess := r.sessions.Get(key)
+			cur := firstNonEmpty(sess.Title, shortKey(key))
+			reply(r.say("name.cur", cur))
+			break
+		}
+		r.sessions.Set(key, func(s *session.Session) { s.Title = truncate(arg, 60) })
+		r.persistSessions()
+		reply(r.say("name.set", truncate(arg, 60)))
+	case "/history":
+		n := 6 // last N exchanges (user+assistant pairs shown compactly)
+		if arg != "" {
+			if v, err := fmt.Sscanf(arg, "%d", &n); v != 1 || err != nil || n < 1 {
+				n = 6
+			}
+			if n > 20 {
+				n = 20
+			}
+		}
+		hist := r.sessions.Snapshot(key)
+		if len(hist) == 0 {
+			reply(r.say("history.none"))
+			break
+		}
+		if n*2 < len(hist) {
+			hist = hist[len(hist)-n*2:]
+		}
+		lines := []string{r.say("history.header", len(hist)/2)}
+		for i := 0; i+1 < len(hist); i += 2 {
+			u, a := hist[i], hist[i+1]
+			who := u.Name
+			if who == "" {
+				who = r.say("quote.anon")
+			}
+			lines = append(lines, r.say("history.line", who, truncate(strings.TrimSpace(u.Content), 80), truncate(strings.TrimSpace(a.Content), 200)))
+		}
+		if len(hist)%2 == 1 { // trailing unpaired user message
+			lines = append(lines, r.say("history.tail", truncate(strings.TrimSpace(hist[len(hist)-1].Content), 80)))
+		}
+		reply(strings.Join(lines, "\n"))
+	case "/rewind":
+		n := 1
+		if arg != "" {
+			if v, err := fmt.Sscanf(arg, "%d", &n); v != 1 || err != nil || n < 1 {
+				n = 1
+			}
+			if n > 20 {
+				n = 20
+			}
+		}
+		dropped := r.sessions.Rewind(key, n)
+		r.persistSessions()
+		reply(r.say("rewind.done", dropped, r.sessions.Count(key)))
+	case "/retry":
+		hist := r.sessions.Snapshot(key)
+		if len(hist) < 2 {
+			reply(r.say("retry.none"))
+			break
+		}
+		last := hist[len(hist)-2] // user half of the last exchange
+		r.sessions.Rewind(key, 1)
+		r.persistSessions()
+		retry := msg
+		retry.Text = last.Content
+		retry.UserName = firstNonEmpty(last.Name, msg.UserName)
+		go r.launchTurn(key, retry, a, sender)
+	case "/remind":
+		whenStr, note, _ := strings.Cut(arg, " ")
+		at, ok := parseWhen(whenStr)
+		if !ok {
+			reply(r.say("remind.bad", whenStr))
+			break
+		}
+		note = strings.TrimSpace(note)
+		if note == "" {
+			reply(r.say("remind.usage"))
+			break
+		}
+		setAt := time.Now()
+		delay := at.Sub(setAt)
+		reply(r.say("remind.set", truncate(note, 60), humanDur(delay)))
+		time.AfterFunc(delay, func() {
+			_, _ = sender.Send(context.Background(), r.say("remind.fire", humanDur(time.Since(setAt)), note),
+				channel.SendOptions{Final: true, MentionUserIDs: []string{msg.UserID}})
+		})
 	case "/status":
 		r.mu.Lock()
 		_, busy := r.turns[key]
@@ -307,7 +393,11 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		if busy {
 			status = r.say("status.busy")
 		}
-		reply(r.say("status.fmt", status, shortKey(key), mode, model, r.sessions.Count(key), jobsN))
+		display := shortKey(key)
+		if sess.Title != "" {
+			display = sess.Title + " (" + display + ")"
+		}
+		reply(r.say("status.fmt", status, display, mode, model, r.sessions.Count(key), jobsN))
 	case "/model":
 		if arg == "" {
 			sess := r.sessions.Get(key)
@@ -1066,4 +1156,60 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// parseWhen understands +30m / +1h30m / 15:30 (today or tomorrow) /
+// 2026-11-20 [15:30] (date-only defaults 09:00).
+func parseWhen(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "+") {
+		d, err := time.ParseDuration(s[1:])
+		if err != nil || d <= 0 || d > 365*24*time.Hour {
+			return time.Time{}, false
+		}
+		return time.Now().Add(d), true
+	}
+	for _, layout := range []struct {
+		l        string
+		dateOnly bool
+	}{
+		{"2006-01-02 15:04", false},
+		{"2006-01-02T15:04", false},
+		{"2006-01-02", true},
+	} {
+		if t, err := time.ParseInLocation(layout.l, s, time.Local); err == nil {
+			if layout.dateOnly {
+				t = t.Add(9 * time.Hour)
+			} else if !t.After(time.Now()) {
+				t = t.Add(24 * time.Hour) // HH:MM already passed → tomorrow
+			}
+			return t, true
+		}
+	}
+	if t, err := time.ParseInLocation("15:04", s, time.Local); err == nil {
+		now := time.Now()
+		t = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
+		if !t.After(now) {
+			t = t.Add(24 * time.Hour)
+		}
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+// humanDur renders a duration compactly (35m / 2h05m / 3d2h).
+func humanDur(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.0fs", d.Seconds())
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
 }

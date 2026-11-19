@@ -37,6 +37,10 @@ type Session struct {
 
 	// Model override for this chat (set via /model).
 	Model string
+
+	// Title names this conversation for /status and the dashboard
+	// (set via /name; chatmux's counterpart to session rename).
+	Title string
 }
 
 // maxHistory bounds stored turns per chat (user+assistant pairs).
@@ -82,6 +86,16 @@ func (s *Store) Append(k Key, user, assistant provider.Msg) {
 	}
 }
 
+// Snapshot returns a copy of a chat's stored history (for /history).
+func (s *Store) Snapshot(k Key) []provider.Msg {
+	sess := s.Get(k)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]provider.Msg, len(sess.History))
+	copy(out, sess.History)
+	return out
+}
+
 // Count returns the number of stored messages for a chat.
 func (s *Store) Count(k Key) int {
 	sess := s.Get(k)
@@ -90,7 +104,7 @@ func (s *Store) Count(k Key) int {
 	return len(sess.History)
 }
 
-// Reset clears everything (history + overrides) for a chat.
+// Reset clears everything (history + overrides + title) for a chat.
 func (s *Store) Reset(k Key) {
 	sess := s.Get(k)
 	s.mu.Lock()
@@ -98,6 +112,21 @@ func (s *Store) Reset(k Key) {
 	sess.History = nil
 	sess.System = ""
 	sess.Model = ""
+	sess.Title = ""
+}
+
+// Rewind drops the last n exchanges (2n messages) from a chat's
+// history — /rewind: the model forgets, the chat log stays.
+func (s *Store) Rewind(k Key, n int) int {
+	sess := s.Get(k)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	drop := n * 2
+	if drop > len(sess.History) {
+		drop = len(sess.History)
+	}
+	sess.History = sess.History[:len(sess.History)-drop]
+	return drop / 2
 }
 
 // Len returns the number of live sessions.

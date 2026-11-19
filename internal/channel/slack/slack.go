@@ -14,6 +14,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -534,4 +536,59 @@ func (s *Slack) api(ctx context.Context, method string, body any, out any) error
 		return json.Unmarshal(b, out)
 	}
 	return nil
+}
+
+// SendFile uploads a local file via files.uploadV2 (getUploadURLExternal
+// → binary POST → completeUploadJSON) into the sender's channel.
+func (s *Sender) SendFile(ctx context.Context, path, caption string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var up struct {
+		OK        bool   `json:"ok"`
+		Error     string `json:"error"`
+		UploadURL string `json:"upload_url"`
+		FileID    string `json:"file_id"`
+	}
+	if err := s.s.api(ctx, "files.getUploadURLExternal", map[string]any{
+		"filename": filepath.Base(path), "length": len(data),
+	}, &up); err != nil {
+		return "", err
+	}
+	if !up.OK {
+		return "", fmt.Errorf("slack getUploadURL: %s", up.Error)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", up.UploadURL, bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	resp, err := s.s.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("slack upload: %s", resp.Status)
+	}
+	var done struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		Files []struct {
+			ID string `json:"id"`
+		} `json:"files"`
+	}
+	if err := s.s.api(ctx, "files.completeUploadJSON", map[string]any{
+		"channel_id": s.chatID,
+		"files":      []map[string]string{{"id": up.FileID, "title": filepath.Base(path)}},
+	}, &done); err != nil {
+		return "", err
+	}
+	if !done.OK {
+		return "", fmt.Errorf("slack completeUpload: %s", done.Error)
+	}
+	if caption != "" {
+		_, _ = s.Send(ctx, caption, channel.SendOptions{Final: true})
+	}
+	return up.FileID, nil
 }

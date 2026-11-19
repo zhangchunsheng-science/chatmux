@@ -295,3 +295,53 @@ func (b *blockingProvider) Stream(ctx context.Context, _ provider.Request) (<-ch
 	}()
 	return ch, nil
 }
+
+func TestSessionCommands(t *testing.T) {
+	rt, key := testRuntime()
+	a := &rt.cfg.Agents[0]
+	s := &fakeSender{}
+	cmd := func(text string) bool {
+		return rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: text}, a, s)
+	}
+	// seed history: one exchange
+	rt.sessions.Append(key, provider.Msg{Role: provider.User, Content: "问", Name: "老王"},
+		provider.Msg{Role: provider.Assistant, Content: "答"})
+
+	if !cmd("/name 报修群") {
+		t.Fatal("/name should dispatch")
+	}
+	waitContains(t, s, "报修群")
+
+	if !cmd("/history") {
+		t.Fatal("/history should dispatch")
+	}
+	waitContains(t, s, "老王")
+	waitContains(t, s, "答")
+
+	if !cmd("/rewind 1") {
+		t.Fatal("/rewind should dispatch")
+	}
+	waitContains(t, s, "剩余历史 0 条")
+
+	if !cmd("/history") {
+		t.Fatal("/history 2 should dispatch")
+	}
+	waitContains(t, s, "还没有历史")
+}
+
+func TestRemindCommand(t *testing.T) {
+	rt, key := testRuntime()
+	a := &rt.cfg.Agents[0]
+	s := &fakeSender{}
+	// 2s reminder should fire and reach the sender
+	if !rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "/remind +2s 喝水"}, a, s) {
+		t.Fatal("/remind should dispatch")
+	}
+	waitContains(t, s, "已设提醒")
+	waitContains(t, s, "提醒")
+	// bad time gets a usage-style error
+	if !rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "/remind 有空 喝水"}, a, s) {
+		t.Fatal("/remind bad should dispatch too")
+	}
+	waitContains(t, s, "看不懂")
+}

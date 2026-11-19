@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -429,6 +432,51 @@ func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions
 		lastID = res.ID
 	}
 	return lastID, nil
+}
+
+// SendFile posts a local file as a multipart message attachment.
+func (s *Sender) SendFile(ctx context.Context, path, caption string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	_ = w.WriteField("payload_json", `{"content":`+string(mustJSON(caption))+`}`)
+	part, err := w.CreateFormFile("files[0]", filepath.Base(path))
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return "", err
+	}
+	_ = w.Close()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", s.d.opts.APIBase+"/channels/"+s.chatID+"/messages", &b)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bot "+s.d.opts.Token)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := s.d.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("discord sendFile: %s %s", resp.Status, string(body[:min(len(body), 300)]))
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	return out.ID, json.Unmarshal(body, &out)
+}
+
+func mustJSON(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
 }
 
 func (s *Sender) Replace(ctx context.Context, msgID, text string) error {

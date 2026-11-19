@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -580,6 +581,34 @@ func (f *Feishu) SetFeedbackHook(fn func(kind, operator, msgID string)) { f.feed
 // submitted (form name, originating chat, submitting user, field values).
 func (f *Feishu) SetFormHandler(fn func(form, chatID, operator string, values map[string]string)) {
 	f.formHook = fn
+}
+
+// SendFile uploads a local file (image → im/v1/images, else im/v1/files)
+// and posts it into the chat; a caption rides along as a text message.
+func (s *Sender) SendFile(ctx context.Context, path, caption string) (string, error) {
+	key, err := s.f.api.uploadFile(ctx, path, isImagePath(path))
+	if err != nil {
+		return "", err
+	}
+	msgType, content := "file", `{"file_key":`+strconv.Quote(key)+`}`
+	if isImagePath(path) {
+		msgType, content = "image", `{"image_key":`+strconv.Quote(key)+`}`
+	}
+	id, err := s.f.api.sendMessage(ctx, "chat_id", s.chatID, msgType, content, "")
+	if caption != "" {
+		if _, cerr := s.f.api.sendMessage(ctx, "chat_id", s.chatID, "text", textContent(caption), ""); cerr == nil && err == nil {
+			return id, nil
+		}
+	}
+	return id, err
+}
+
+func isImagePath(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
+		return true
+	}
+	return false
 }
 
 // SendForm posts an interactive form card into the sender's chat.
