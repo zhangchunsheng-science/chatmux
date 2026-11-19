@@ -111,6 +111,23 @@ chatmux version   # v0.4.5 (darwin/arm64)
 chatmux update    # 拉 GitHub latest release 并原子替换自身
 ```
 
+## fleet 多实例管理
+
+一台机器管多个 chatmux 网关（`~/.chatmux/fleet.json` 或 `-fleet 路径`，
+或环境变量 `CHATMUX_FLEET`）：
+
+```json
+{"instances":[{"name":"prod","baseUrl":"http://10.0.0.2:8080","token":"…"},
+              {"name":"lab","baseUrl":"http://127.0.0.1:8081"}]}
+```
+
+```bash
+chatmux fleet list                  # 全实例健康（版本/通道/agents，并行探测）
+chatmux fleet status prod           # 单实例完整状态
+chatmux fleet send prod -to feishu:oc_xxx 文本
+chatmux fleet ask prod -to feishu:oc_xxx 问题 -opt A -opt B
+```
+
 ## MCP 服务（被 Claude Code 等调用）
 
 chatmux 可作为 stdio MCP server 暴露给 MCP 客户端——botmux 供宿主
@@ -287,6 +304,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.4.9（对齐循环第 9 轮）：fleet 多实例管理——~/.chatmux/fleet.json
+（或 -fleet / CHATMUX_FLEET）列出多网关，chatmux fleet list 并行探测
+健康（版本/通道/agents，status 新增 version 字段）、status / send / ask
+按实例代理。
 
 v0.4.8（对齐循环第 8 轮）：/orchestrate 并行编排——多 agent 扇出同一
 任务（无状态调用，完成即回帖【agent】），可选 `+ 汇总agent` 综合各方

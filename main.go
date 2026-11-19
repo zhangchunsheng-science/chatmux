@@ -6,7 +6,7 @@
 // sessions, durable dedup, cron schedules and durable usage accounting.
 //
 // Server:   chatmux -config chatmux.json
-// Client:   chatmux status|stop|send [-config chatmux.json]
+// Client:   chatmux status|stop|send|ask|mcp|version|update|fleet [-config chatmux.json]
 package main
 
 import (
@@ -42,6 +42,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
 	"github.com/zhangchunsheng-science/chatmux/internal/cron"
 	"github.com/zhangchunsheng-science/chatmux/internal/docwatch"
+	"github.com/zhangchunsheng-science/chatmux/internal/fleet"
 	"github.com/zhangchunsheng-science/chatmux/internal/mcp"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
@@ -64,7 +65,7 @@ func main() {
 
 func runClient(args []string, cfgPath string) int {
 	cmd := args[0]
-	// version/update need no config file
+	// version/update/fleet need no gateway config
 	switch cmd {
 	case "version":
 		fmt.Printf("chatmux v%s (%s/%s)\n", version.Version, runtime.GOOS, runtime.GOARCH)
@@ -83,9 +84,11 @@ func runClient(args []string, cfgPath string) int {
 		}
 		fmt.Printf("已更新 v%s → v%s（重启 chatmux 生效）。\n", res.From, res.To)
 		return 0
+	case "fleet":
+		return runFleet(args[1:])
 	}
 	if cmd != "status" && cmd != "stop" && cmd != "send" && cmd != "ask" && cmd != "mcp" {
-		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send|ask|mcp|version|update)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (want status|stop|send|ask|mcp|version|update|fleet)\n", cmd)
 		return 2
 	}
 	// accept -config after the subcommand too: chatmux status -config x.json
@@ -219,6 +222,133 @@ func runClient(args []string, cfgPath string) int {
 		}
 	}
 	return 0
+}
+
+// runFleet: chatmux fleet list|status <名>|send <名> -to ch:chat 文本|ask <名> -to ch:chat 问题
+// Fleet file: -fleet 路径（默认 ~/.chatmux/fleet.json），格式
+// {"instances":[{"name":"x","baseUrl":"http://...","token":"..."}]}
+func runFleet(args []string) int {
+	fleetPath := os.Getenv("CHATMUX_FLEET")
+	if fleetPath == "" {
+		home, _ := os.UserHomeDir()
+		fleetPath = filepath.Join(home, ".chatmux", "fleet.json")
+	}
+	// scan out -fleet/-fleet= before the subcommand
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-fleet" && i+1 < len(args) {
+			fleetPath = args[i+1]
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "-fleet=") {
+			fleetPath = strings.TrimPrefix(args[i], "-fleet=")
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	if len(rest) == 0 {
+		fmt.Fprintln(os.Stderr, `usage: chatmux fleet [-fleet 路径] list | status <实例> | send <实例> -to channel:chatId 文本 | ask <实例> -to channel:chatId [-opt A] 问题`)
+		return 2
+	}
+	fc, err := fleet.Load(fleetPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "fleet 文件不存在？先建一个：{\"instances\":[{\"name\":\"local\",\"baseUrl\":\"http://127.0.0.1:8080\",\"token\":\"...\"}]}")
+		return 1
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	sub := rest[0]
+	rest = rest[1:]
+	switch sub {
+	case "list":
+		for _, s := range fc.List(ctx) {
+			if !s.Reachable {
+				fmt.Printf("%-12s ✗ 不可达（%s）\n", s.Name, s.Err)
+				continue
+			}
+			fmt.Printf("%-12s ✓ v%s · 通道 %d/%d · agents %d\n", s.Name, s.Version, s.ChannelsUp, s.ChannelsAll, s.Agents)
+		}
+		return 0
+	case "status":
+		if len(rest) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: chatmux fleet status <实例>")
+			return 2
+		}
+		body, code, err := fc.Call(ctx, rest[0], http.MethodGet, "/admin/status", nil)
+		if err != nil || code != 200 {
+			fmt.Fprintf(os.Stderr, "HTTP %d err=%v\n", code, err)
+			return 1
+		}
+		var pretty bytes.Buffer
+		_ = json.Indent(&pretty, body, "", "  ")
+		fmt.Println(pretty.String())
+		return 0
+	case "send", "ask":
+		if len(rest) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: chatmux fleet "+sub+" <实例> -to channel:chatId [文本/问题]")
+			return 2
+		}
+		name := rest[0]
+		fs := flag.NewFlagSet("fleet "+sub, flag.ExitOnError)
+		to := fs.String("to", "", "channel:chatId[:threadId]")
+		timeout := fs.Int("timeout", 600, "ask timeout seconds")
+		_ = fs.String("opt", "", "fixed option (repeatable)")
+		fs.Parse(rest[1:])
+		text := strings.Join(fs.Args(), " ")
+		if *to == "" || strings.TrimSpace(text) == "" {
+			fmt.Fprintln(os.Stderr, "usage: chatmux fleet "+sub+" <实例> -to channel:chatId [文本/问题]")
+			return 2
+		}
+		parts := strings.SplitN(*to, ":", 3)
+		var path string
+		var payload any
+		if sub == "send" {
+			path = "/admin/send"
+			payload = map[string]any{"channel": parts[0], "chatId": parts[1], "text": text}
+		} else {
+			path = "/admin/ask"
+			payload = map[string]any{"channel": parts[0], "chatId": parts[1], "question": text, "timeoutSec": *timeout}
+		}
+		if len(parts) == 3 {
+			payload.(map[string]any)["threadId"] = parts[2]
+		}
+		if sub == "ask" {
+			var opts []string
+			raw := rest[1:]
+			for i := 0; i < len(raw); i++ {
+				if raw[i] == "-opt" && i+1 < len(raw) {
+					opts = append(opts, raw[i+1])
+				}
+			}
+			if len(opts) > 0 {
+				payload.(map[string]any)["options"] = opts
+			}
+		}
+		body, code, err := fc.Call(ctx, name, http.MethodPost, path, payload)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if code != 200 {
+			fmt.Fprintf(os.Stderr, "HTTP %d\n%s\n", code, body)
+			return 1
+		}
+		if sub == "send" {
+			fmt.Println("已发送。")
+			return 0
+		}
+		var out struct {
+			Answer string `json:"answer"`
+		}
+		_ = json.Unmarshal(body, &out)
+		fmt.Println(out.Answer)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "unknown fleet subcommand %q (want list|status|send|ask)\n", sub)
+		return 2
+	}
 }
 
 func adminReq(method, url, token string, body []byte) ([]byte, int, error) {
@@ -494,6 +624,7 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 			"runtime":  rt.Status(),
 			"agents":   len(cfg.Agents),
 			"cron":     len(cfg.Cron),
+			"version":  version.Version,
 		})
 	})
 	mux.HandleFunc("/admin/stop", func(w http.ResponseWriter, r *http.Request) {
