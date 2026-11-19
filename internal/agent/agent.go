@@ -571,6 +571,8 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 		reply(r.say("agent.set", arg))
 	case "/schedule":
 		r.handleSchedule(key, msg, reply)
+	case "/orchestrate":
+		return r.handleOrchestrate(key, msg, sender)
 	case "/help":
 		reply(r.say("help"))
 	default:

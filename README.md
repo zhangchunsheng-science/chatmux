@@ -96,6 +96,7 @@ API 型后端（MiniMax、DeepSeek、Moonshot、vLLM…）用 openai provider �
 | `/model [名称]` | 查看/切换本会话模型 |
 | `/agents` · `/agent <名>` | 查看/切换本会话 agent（handoff；`/agent auto` 恢复路由） |
 | `/<agent名> <任务>` | 动态派发：任意已配置 agent 直接接活（如 `/reviewer 帮我审这段 diff`），后台执行、结果回本聊天 |
+| `/orchestrate a,b [+ 汇总] 任务` | 并行编排：多 agent 同时做同一任务，完成即回帖；`+ 汇总agent` 最后综合各方答案 |
 | `/system [提示词]` | 查看/覆盖 system 提示词 |
 | `/skills` · `/skill <名> <指令>` | 列出 / 使用技能 |
 | `/flows` · `/flow <名> <输入>` | 列出 / 后台跑多步工作流 |
@@ -286,6 +287,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `dataDir/attachments/` 后以本地文件喂给视觉模型
 
 ## 状态
+
+v0.4.8（对齐循环第 8 轮）：/orchestrate 并行编排——多 agent 扇出同一
+任务（无状态调用，完成即回帖【agent】），可选 `+ 汇总agent` 综合各方
+答案；usage 记 mode=orchestrate。
 
 v0.4.7（对齐循环第 7 轮）：文档监视 docwatch——本地文件变更检测
 （LCS 行 diff + 摘录上限），变更即以 {{diff}} 触发 agent 提示词，

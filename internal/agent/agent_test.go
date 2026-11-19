@@ -377,3 +377,56 @@ func TestAgentSwitch(t *testing.T) {
 	}
 	waitContains(t, s, "恢复按路由")
 }
+
+// tagProvider echoes the model name + last user prompt (distinct per agent).
+type tagProvider struct{}
+
+func (e *tagProvider) Name() string { return "openai" }
+func (e *tagProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Delta, error) {
+	ch := make(chan provider.Delta, 2)
+	last := ""
+	for _, m := range req.Messages {
+		if m.Role == provider.User {
+			last = m.Content
+		}
+	}
+	go func() {
+		ch <- provider.Delta{Text: "[" + req.Model + "] " + last}
+		close(ch)
+	}()
+	return ch, nil
+}
+
+func TestOrchestrate(t *testing.T) {
+	cfg := &config.Config{
+		Agents: []config.AgentConfig{
+			{Name: "a1", Provider: "openai", Model: "m1"},
+			{Name: "a2", Provider: "openai", Model: "m2"},
+			{Name: "merger", Provider: "openai", Model: "mm"},
+		},
+		DefaultAgent: "a1",
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&tagProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+	s := &fakeSender{}
+
+	if !rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "/orchestrate a1,a2 + merger 做个方案"}, &cfg.Agents[0], s) {
+		t.Fatal("/orchestrate not handled")
+	}
+	waitContains(t, s, "已并行派发给 2 个 agent")
+	waitContains(t, s, "【a1】\n[m1] 做个方案")
+	waitContains(t, s, "【a2】\n[m2] 做个方案")
+	waitContains(t, s, "【汇总 · merger】")
+
+	// unknown agent → clear error, no fan-out
+	s2 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/orchestrate nope 任务"}, &cfg.Agents[0], s2)
+	waitContains(t, s2, "未配置的 agent：nope")
+
+	// missing task → usage
+	s3 := &fakeSender{}
+	rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", Text: "/orchestrate a1"}, &cfg.Agents[0], s3)
+	waitContains(t, s3, "用法: /orchestrate")
+}
