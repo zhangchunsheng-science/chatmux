@@ -21,6 +21,7 @@ type Pending struct {
 	options []string // empty = free-text answer
 	since   time.Time
 	ch      chan string
+	broker  *Broker // set by Register; lets Wait clean up on give-up
 }
 
 // Broker tracks outstanding asks per process.
@@ -53,6 +54,7 @@ func (b *Broker) Register(channelName, chatID string, options []string) *Pending
 		delete(b.pending, old.id)
 		// leave old.ch empty: its Wait returns on timeout/cancel
 	}
+	p.broker = b
 	b.pending[p.id] = p
 	b.byChat[channelName+"|"+chatID] = p
 	return p
@@ -62,6 +64,8 @@ func (b *Broker) Register(channelName, chatID string, options []string) *Pending
 func (p *Pending) ID() string { return p.id }
 
 // Wait blocks until resolved, ctx done, or timeout (0 = 10 min default).
+// Giving up (timeout/cancel) removes the question from the broker so the
+// pending list doesn't accumulate zombies.
 func (p *Pending) Wait(ctx context.Context, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
@@ -72,7 +76,24 @@ func (p *Pending) Wait(ctx context.Context, timeout time.Duration) (string, erro
 	case ans := <-p.ch:
 		return ans, nil
 	case <-tctx.Done():
+		if p.broker != nil {
+			p.broker.abandon(p)
+		}
 		return "", tctx.Err()
+	}
+}
+
+// abandon drops a pending question that will never be answered. Identity-
+// checked: superseding or resolving the same chat first makes this a no-op.
+func (b *Broker) abandon(p *Pending) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if cur, ok := b.pending[p.id]; ok && cur == p {
+		delete(b.pending, p.id)
+	}
+	key := p.channel + "|" + p.chatID
+	if cur, ok := b.byChat[key]; ok && cur == p {
+		delete(b.byChat, key)
 	}
 }
 

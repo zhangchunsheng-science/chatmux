@@ -70,3 +70,38 @@ func TestAskSupersede(t *testing.T) {
 		t.Fatal("superseded ask must be dead")
 	}
 }
+
+func TestWaitTimeoutCleansUp(t *testing.T) {
+	b := New()
+	p := b.Register("feishu", "c1", nil)
+	if len(b.Pending()) != 1 {
+		t.Fatalf("want 1 pending, got %d", len(b.Pending()))
+	}
+	_, err := p.Wait(context.Background(), 30*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(b.Pending()) == 0 {
+			return // zombie cleaned
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed-out ask still pending: %+v", b.Pending())
+}
+
+func TestAbandonNoOpAfterResolve(t *testing.T) {
+	b := New()
+	p := b.Register("feishu", "c1", nil)
+	go func() { _, _ = p.Wait(context.Background(), time.Second) }()
+	// answer first, then a late abandon must not corrupt state
+	time.Sleep(20 * time.Millisecond)
+	if !b.ResolveForm("chatmux_ask:"+p.id, map[string]string{"answer": "是"}) {
+		t.Fatal("resolve failed")
+	}
+	b.abandon(p) // late give-up after resolve: must be a no-op
+	if len(b.Pending()) != 0 {
+		t.Fatalf("pending should stay empty, got %+v", b.Pending())
+	}
+}
