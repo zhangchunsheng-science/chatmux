@@ -86,7 +86,8 @@
       "apiKey": "sk-ant-xxxx",
       "system": "You are a senior engineer. Answer with code first, explanation second.",
       "routes": [
-        { "channel": "telegram", "chatType": "group" }
+        { "channel": "telegram", "chatType": "group" },
+        { "channel": "feishu", "chatType": "p2p", "userId": "ou_only-me" }
       ]
     },
     {
@@ -110,6 +111,7 @@
       "schedule": "30 9 * * 1-5",
       "channel": "feishu",
       "chatId": "oc_xxxx",
+      "threadId": "话题群时指定话题 id（可选）",
       "text": "请总结过去一天的工作进展和今天的计划。"
     }
   ],
@@ -141,6 +143,7 @@
       "intervalSec": 60,
       "channel": "feishu",
       "chatId": "oc_xxxx",
+      "threadId": "发到话题群的指定话题时填（可选）",
       "prompt": "计划文档有更新，请总结变更并提醒相关事项：\n{{diff}}"
     }
   ],

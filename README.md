@@ -362,6 +362,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.10（对齐循环第 31 轮）：配置文档补全——config 结构体字段与
+chatmux.json.example 程序化比对，补三个未文档化字段：路由 userId（按用户
+过滤唤起 agent）、cron/docwatch 的 threadId（话题群定向）；三者均已逐一
+验证在代码里真实消费（非死字段）。
+
 v0.6.9（对齐循环第 30 轮）：记账闭环——runOnce（工作流步骤/动态派发/bg 任务
 共用）此前完全不记 usage，/orchestrate 的 callAgentText 错误口也漏；现在所有
 模型/CLI 调用点（runTurn 三口、runCliTurn 三口、runOnce 两分支、
