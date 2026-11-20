@@ -365,6 +365,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.22（对齐循环第 44 轮）：会话表瘦身——单会话历史本有 40 条上限，但
+会话数量无界：每个后台任务留一个死 |job 会话常驻内存（每任务一个，永不
+回收），一次性群聊永久躺在 sessions.json。现在任务完成即重置其会话；
+Save 时清掉空会话（纯 Get 副产物）；持久化按 LastUsed 封顶 500 条，最陈
+旧的先淘汰。
+
 v0.6.21（对齐循环第 43 轮）：钉钉附件落地——六通道附件覆盖收口。图片/
 语音/文件消息解析 content.downloadCode，经 app token（复用已有缓存）+
 messageFiles/download 两步换取临时 URL 再取字节；需要渠道配 robotCode。

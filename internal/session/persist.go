@@ -8,21 +8,31 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
 
 // persistedSession is the on-disk form of one session.
 type persistedSession struct {
-	History []provider.Msg `json:"history"`
-	System  string         `json:"system,omitempty"`
-	Model   string         `json:"model,omitempty"`
-	Title   string         `json:"title,omitempty"`
-	Agent   string         `json:"agent,omitempty"`
+	History  []provider.Msg `json:"history"`
+	System   string         `json:"system,omitempty"`
+	Model    string         `json:"model,omitempty"`
+	Title    string         `json:"title,omitempty"`
+	Agent    string         `json:"agent,omitempty"`
+	LastUsed time.Time      `json:"lastUsed,omitempty"`
 }
 
-// Save snapshots all sessions atomically (tmp + rename).
+// maxPersistedSessions caps sessions.json: every chat that ever said
+// anything would otherwise persist forever. Past the cap the stalest
+// (by LastUsed) drop off disk first.
+const maxPersistedSessions = 500
+
+// Save snapshots all sessions atomically (tmp + rename). Empty sessions
+// (pure Get() artifacts, finished background jobs) are pruned from the
+// in-memory map as a side effect.
 func (s *Store) Save(dataDir string) error {
 	if dataDir == "" {
 		dataDir = "data"
@@ -31,13 +41,30 @@ func (s *Store) Save(dataDir string) error {
 		return err
 	}
 	s.mu.Lock()
+	for k, sess := range s.byKey {
+		if len(sess.History) == 0 && sess.System == "" && sess.Model == "" && sess.Agent == "" && sess.Title == "" {
+			delete(s.byKey, k)
+		}
+	}
 	out := make(map[string]persistedSession, len(s.byKey))
+	type stamp struct {
+		anchor string
+		last   time.Time
+	}
+	var stamps []stamp
 	for k, sess := range s.byKey {
 		// skip background-job pseudo sessions (chat|jobN keys)
 		if strings.Contains(k.ChatID, "|job") {
 			continue
 		}
-		out[k.String()] = persistedSession{History: sess.History, System: sess.System, Model: sess.Model, Title: sess.Title, Agent: sess.Agent}
+		out[k.String()] = persistedSession{History: sess.History, System: sess.System, Model: sess.Model, Title: sess.Title, Agent: sess.Agent, LastUsed: sess.LastUsed}
+		stamps = append(stamps, stamp{k.String(), sess.LastUsed})
+	}
+	if len(out) > maxPersistedSessions {
+		sort.Slice(stamps, func(i, j int) bool { return stamps[i].last.Before(stamps[j].last) })
+		for _, st := range stamps[:len(stamps)-maxPersistedSessions] {
+			delete(out, st.anchor)
+		}
 	}
 	s.mu.Unlock()
 	b, err := json.Marshal(out)
@@ -72,7 +99,7 @@ func LoadSessions(dataDir string) *Store {
 		if !ok {
 			continue
 		}
-		s.byKey[k] = &Session{Key: k, History: ps.History, System: ps.System, Model: ps.Model, Title: ps.Title, Agent: ps.Agent}
+		s.byKey[k] = &Session{Key: k, History: ps.History, System: ps.System, Model: ps.Model, Title: ps.Title, Agent: ps.Agent, LastUsed: ps.LastUsed}
 	}
 	return s
 }

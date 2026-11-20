@@ -4,6 +4,7 @@ package session
 
 import (
 	"sync"
+	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
@@ -45,6 +46,10 @@ type Session struct {
 	// Agent overrides route-based agent selection for this chat
 	// (set via /agent; botmux handoff's counterpart).
 	Agent string
+
+	// LastUsed stamps the most recent Append/Set; persistence evicts
+	// the stalest sessions past maxPersistedSessions.
+	LastUsed time.Time
 }
 
 // maxHistory bounds stored turns per chat (user+assistant pairs).
@@ -77,6 +82,7 @@ func (s *Store) Set(k Key, fn func(*Session)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fn(sess)
+	sess.LastUsed = time.Now()
 }
 
 // Append records a completed exchange, trimming to maxHistory messages.
@@ -88,6 +94,7 @@ func (s *Store) Append(k Key, user, assistant provider.Msg) {
 	if n := len(sess.History); n > maxHistory {
 		sess.History = sess.History[n-maxHistory:]
 	}
+	sess.LastUsed = time.Now()
 }
 
 // Snapshot returns a copy of a chat's stored history (for /history).

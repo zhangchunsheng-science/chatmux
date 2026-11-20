@@ -1,9 +1,11 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
@@ -61,5 +63,66 @@ func TestParseAnchor(t *testing.T) {
 		if ok != tc.ok || (ok && k != tc.want) {
 			t.Errorf("parseAnchor(%q) = %+v,%v want %+v,%v", tc.in, k, ok, tc.want, tc.ok)
 		}
+	}
+}
+
+func TestSavePrunesEmptySessions(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore()
+	// pure Get() artifact: no history, no overrides
+	s.Get(Key{Channel: "feishu", ChatID: "ghost"})
+	// override-only session survives (it's deliberate state)
+	s.Set(Key{Channel: "feishu", ChatID: "kept"}, func(x *Session) { x.Model = "gpt" })
+	// lived-in session survives
+	s.Append(Key{Channel: "feishu", ChatID: "real"}, provider.Msg{Role: "user", Content: "hi"}, provider.Msg{Role: "assistant", Content: "yo"})
+	if err := s.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	if s.Len() != 2 {
+		t.Fatalf("empty session not pruned from memory: len=%d", s.Len())
+	}
+	loaded := LoadSessions(dir)
+	if loaded.Len() != 2 {
+		t.Fatalf("want 2 persisted sessions, got %d", loaded.Len())
+	}
+	if _, ok := loaded.byKey[Key{Channel: "feishu", ChatID: "ghost"}]; ok {
+		t.Fatal("ghost session persisted")
+	}
+}
+
+func TestSaveCapsPersistedSessions(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore()
+	for i := 0; i < maxPersistedSessions+1; i++ {
+		k := Key{Channel: "feishu", ChatID: fmt.Sprintf("c%04d", i)}
+		s.Append(k, provider.Msg{Role: "user", Content: "hi"}, provider.Msg{Role: "assistant", Content: "yo"})
+		// manual age: earlier chats used long ago, later chats recently
+		s.byKey[k].LastUsed = time.Now().Add(time.Duration(i-maxPersistedSessions) * time.Hour)
+	}
+	if err := s.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	loaded := LoadSessions(dir)
+	if loaded.Len() != maxPersistedSessions {
+		t.Fatalf("want cap %d, got %d", maxPersistedSessions, loaded.Len())
+	}
+	if _, ok := loaded.byKey[Key{Channel: "feishu", ChatID: "c0000"}]; ok {
+		t.Fatal("stalest session should have been evicted")
+	}
+	if _, ok := loaded.byKey[Key{Channel: "feishu", ChatID: "c0001"}]; !ok {
+		t.Fatal("second-stalest should survive")
+	}
+}
+
+func TestAppendStampsLastUsed(t *testing.T) {
+	s := NewStore()
+	k := Key{Channel: "feishu", ChatID: "c1"}
+	old := time.Now().Add(-time.Hour)
+	s.Append(k, provider.Msg{Role: "user", Content: "hi"}, provider.Msg{Role: "assistant", Content: "yo"})
+	s.mu.Lock()
+	stamp := s.byKey[k].LastUsed
+	s.mu.Unlock()
+	if stamp.Before(old.Add(time.Hour)) {
+		t.Fatalf("LastUsed not stamped: %v", stamp)
 	}
 }

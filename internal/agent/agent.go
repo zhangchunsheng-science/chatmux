@@ -1269,6 +1269,9 @@ func (r *Runtime) startBgJob(key session.Key, msg channel.Message, a *config.Age
 		r.mu.Lock()
 		delete(r.jobs, id)
 		r.mu.Unlock()
+		// job sessions are dead weight: nothing resumes them, and without
+		// this they accumulate in memory one per job ever run
+		r.sessions.Reset(execKey)
 	}()
 
 	go func() {
