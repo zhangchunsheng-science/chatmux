@@ -51,7 +51,9 @@ func (f *fakeSender) joined() string {
 // waitContains polls for an async reply (commands send via goroutine).
 func waitContains(t *testing.T, s *fakeSender, substr string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// generous window: stream-start failures retry once after a 2s
+	// backoff, so failure notices can land well after the turn starts
+	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
 		if strings.Contains(s.joined(), substr) {
 			return
@@ -1132,5 +1134,66 @@ func TestTranscribeAudioViaURL(t *testing.T) {
 	})
 	if !found {
 		t.Fatal("URL audio was not fetched/saved")
+	}
+}
+
+// flakyProvider errors on the first Stream call, succeeds after —
+// mirrors a transient network blip at stream start.
+type flakyProvider struct {
+	calls int
+}
+
+func (f *flakyProvider) Name() string { return "openai" }
+func (f *flakyProvider) Stream(ctx context.Context, _ provider.Request) (<-chan provider.Delta, error) {
+	f.calls++
+	if f.calls == 1 {
+		return nil, fmt.Errorf("connection reset by peer")
+	}
+	ch := make(chan provider.Delta, 1)
+	ch <- provider.Delta{Text: "好了"}
+	close(ch)
+	return ch, nil
+}
+
+func TestStreamRetryRecovers(t *testing.T) {
+	fp := &flakyProvider{}
+	// unit: one blip, then success
+	ch, err := streamWithRetry(context.Background(), fp, provider.Request{})
+	if err != nil {
+		t.Fatalf("retry did not recover: %v", err)
+	}
+	var got string
+	for d := range ch {
+		got += d.Text
+	}
+	if got != "好了" || fp.calls != 2 {
+		t.Fatalf("got %q after %d calls", got, fp.calls)
+	}
+}
+
+func TestStreamRetryStillFails(t *testing.T) {
+	// always-failing provider: exactly one retry, then the error surfaces
+	fp := &errStreamProvider{}
+	ch, err := streamWithRetry(context.Background(), fp, provider.Request{})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	_ = ch
+}
+
+func TestStreamRetryCancelledDuringBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	fp := &flakyProvider{}
+	// cancel while the retry timer is running
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	_, err := streamWithRetry(ctx, fp, provider.Request{})
+	if err == nil || ctx.Err() == nil {
+		t.Fatalf("want ctx error, got %v", err)
+	}
+	if fp.calls != 1 {
+		t.Fatalf("second attempt should not run after cancel, calls=%d", fp.calls)
 	}
 }

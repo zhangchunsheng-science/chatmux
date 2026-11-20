@@ -767,7 +767,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	}
 
 	start := time.Now()
-	stream, err := prov.Stream(ctx, req)
+	stream, err := streamWithRetry(ctx, prov, req)
 	if err != nil {
 		_, _ = t.sender.Send(ctx, r.say("model.fail", err.Error()), channel.SendOptions{Final: true})
 		// failed calls are usage too: /insight and the dashboard must
@@ -1427,7 +1427,7 @@ func (r *Runtime) runOnce(ctx context.Context, execKey session.Key, a *config.Ag
 		return "", fmt.Errorf("provider %s 未配置", providerName(a))
 	}
 	start := time.Now()
-	stream, err := prov.Stream(ctx, provider.Request{
+	stream, err := streamWithRetry(ctx, prov, provider.Request{
 		Model: a.Model, System: firstNonEmpty(a.System, defaultSystemPrompt),
 		Messages:  []provider.Msg{{Role: provider.User, Content: prompt}},
 		MaxTokens: 4096, APIKey: a.APIKey, BaseURL: a.BaseURL,

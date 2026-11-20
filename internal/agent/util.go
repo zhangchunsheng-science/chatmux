@@ -6,10 +6,12 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
@@ -112,4 +114,27 @@ func fetchURL(ctx context.Context, url string) ([]byte, string, error) {
 		mime = http.DetectContentType(data)
 	}
 	return data, mime, nil
+}
+
+// streamRetryDelay is the breath between a failed stream start and its
+// single retry.
+const streamRetryDelay = 2 * time.Second
+
+// streamWithRetry starts a model stream, retrying once on a start
+// failure: nothing has been produced yet, so the retry is invisible to
+// the user and catches transient blips (connection resets, brief 5xx).
+func streamWithRetry(ctx context.Context, p provider.Provider, req provider.Request) (<-chan provider.Delta, error) {
+	ch, err := p.Stream(ctx, req)
+	if err == nil || ctx.Err() != nil {
+		return ch, err
+	}
+	log.Printf("model stream start failed (%v) — retrying once", err)
+	timer := time.NewTimer(streamRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+	}
+	return p.Stream(ctx, req)
 }

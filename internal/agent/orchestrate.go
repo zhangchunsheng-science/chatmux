@@ -111,7 +111,7 @@ func (r *Runtime) callAgentText(ctx context.Context, a *config.AgentConfig, prom
 		return "", fmt.Errorf("provider %s not registered", providerName(a))
 	}
 	start := time.Now()
-	stream, err := prov.Stream(ctx, provider.Request{
+	stream, err := streamWithRetry(ctx, prov, provider.Request{
 		Model:       a.Model,
 		System:      firstNonEmpty(a.System, defaultSystemPrompt),
 		Messages:    []provider.Msg{{Role: provider.User, Content: prompt}},

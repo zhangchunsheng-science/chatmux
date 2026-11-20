@@ -365,6 +365,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.26（对齐循环第 48 轮）：模型流启动失败自动重试一次——连接抖动、瞬
+时 5xx 这类 blip 原来直接变成用户可见的失败；启动阶段还没有任何输出，
+重试完全无感。2 秒退避可被取消打断（/stop、看门狗、停机都生效），三处
+调用点（会话 turn、工作流/动态派发、编排）统一走 streamWithRetry。中
+途出错（已产出内容）不重试，避免重复输出。
+
 v0.6.25（对齐循环第 47 轮）：`chatmux check`——配置校验子命令：agents/
 routes/cron/workflows/docwatch/i18n/http 语义检查 + 各通道真实构造（凭据
 形状、AES key 长度等启动时才爆的错提前暴露），docwatch 路径未就绪为警告。
