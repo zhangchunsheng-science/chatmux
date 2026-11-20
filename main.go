@@ -432,7 +432,13 @@ func runCheck(cfgPath string) int {
 	for i, cc := range cfg.Channels {
 		f, ok := channelFactories[cc.Type]
 		if !ok {
-			problems = append(problems, fmt.Sprintf("channels[%d] %q: unknown type %q", i, cc.Name, cc.Type))
+			types := make([]string, 0, len(channelFactories))
+			for ty := range channelFactories {
+				types = append(types, ty)
+			}
+			sort.Strings(types)
+			problems = append(problems, fmt.Sprintf("channels[%d] %q: unknown type %q%s",
+				i, cc.Name, cc.Type, config.Suggest(cc.Type, types)))
 			continue
 		}
 		if _, err := f(cc.Options); err != nil {

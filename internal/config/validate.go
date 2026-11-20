@@ -5,8 +5,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
@@ -62,6 +64,16 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		warn("dataDir %q: %v — usage logging would be silently disabled", dir, err)
 	}
 
+	// listen probe: when the address can't be bound, boot dies with a
+	// bare "address already in use" — name it here, before anything is
+	// started. Advisory: check may run on a different machine than the
+	// service, and the bind is released immediately after probing.
+	if ln, err := net.Listen("tcp", cfg.HTTP.Listen); err != nil {
+		warn("http.listen %q: %v — the server would fail to bind", cfg.HTTP.Listen, err)
+	} else {
+		ln.Close()
+	}
+
 	agents := map[string]bool{}
 	for i, a := range cfg.Agents {
 		if a.Name == "" {
@@ -73,7 +85,12 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		}
 		agents[a.Name] = true
 		if a.Provider != "" && !knownProviders[a.Provider] {
-			add("agents[%d] %q: unknown provider %q (openai|anthropic)", i, a.Name, a.Provider)
+			providers := make([]string, 0, len(knownProviders))
+			for p := range knownProviders {
+				providers = append(providers, p)
+			}
+			sort.Strings(providers)
+			add("agents[%d] %q: unknown provider %q (openai|anthropic)%s", i, a.Name, a.Provider, Suggest(a.Provider, providers))
 		}
 		if a.TurnTimeout != "" {
 			if d, err := time.ParseDuration(a.TurnTimeout); err != nil || d <= 0 {

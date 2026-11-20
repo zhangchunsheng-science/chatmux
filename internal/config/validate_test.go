@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func TestValidateCleanConfig(t *testing.T) {
 			{Name: "coder", Provider: "anthropic", APIKey: "k", Routes: []Route{{Channel: "fs"}}},
 		},
 		DefaultAgent: "helper",
-		HTTP:         HTTPConfig{Listen: ":8080"},
+		HTTP:         HTTPConfig{Listen: testListen(t)},
 		Cron:         []CronConfig{{Name: "daily", Schedule: "30 9 * * *", Channel: "fs", ChatID: "c1", Text: "早报"}},
 	}
 	if got, warn := Validate(cfg); len(got) != 0 || len(warn) != 0 {
@@ -60,7 +61,7 @@ func TestValidateDocwatchPathIsWarning(t *testing.T) {
 	cfg := &Config{
 		Channels: []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{}`)}},
 		Agents:   []AgentConfig{{Name: "a", APIKey: "k"}},
-		HTTP:     HTTPConfig{Listen: ":8080"},
+		HTTP:     HTTPConfig{Listen: testListen(t)},
 		DocWatch: []DocWatchConfig{{Name: "later", Path: "/nonexistent/plan.md", Channel: "fs", ChatID: "c1", Prompt: "p"}},
 	}
 	problems, warnings := Validate(cfg)
@@ -79,7 +80,7 @@ func TestValidateNoChannelsIsWarning(t *testing.T) {
 	cfg := &Config{
 		Agents:       []AgentConfig{{Name: "a", Provider: "openai", APIKey: "k"}},
 		DefaultAgent: "a",
-		HTTP:         HTTPConfig{Listen: ":8080"},
+		HTTP:         HTTPConfig{Listen: testListen(t)},
 	}
 	problems, warnings := Validate(cfg)
 	if len(problems) != 0 {
@@ -96,7 +97,7 @@ func TestValidateWebChannelRoutesOK(t *testing.T) {
 	cfg := &Config{
 		Agents:       []AgentConfig{{Name: "a", Routes: []Route{{Channel: "web"}}}},
 		DefaultAgent: "a",
-		HTTP:         HTTPConfig{Listen: ":8080"},
+		HTTP:         HTTPConfig{Listen: testListen(t)},
 		Cron:         []CronConfig{{Name: "c", Schedule: "0 9 * * *", Channel: "web", ChatID: "console", Text: "早"}},
 		DataDir:      t.TempDir(),
 	}
@@ -120,7 +121,7 @@ func TestValidateDataDirNotWritable(t *testing.T) {
 	cfg := &Config{
 		Agents:       []AgentConfig{{Name: "a"}},
 		DefaultAgent: "a",
-		HTTP:         HTTPConfig{Listen: ":8080"},
+		HTTP:         HTTPConfig{Listen: testListen(t)},
 		DataDir:      sub,
 	}
 	problems, warnings := Validate(cfg)
@@ -157,7 +158,7 @@ func TestValidateAgentKeyProbe(t *testing.T) {
 	cfg := &Config{
 		Agents:       []AgentConfig{{Name: "a"}}, // provider defaults to openai
 		DefaultAgent: "a",
-		HTTP:         HTTPConfig{Listen: ":8080"},
+		HTTP:         HTTPConfig{Listen: testListen(t)},
 		DataDir:      t.TempDir(),
 	}
 	if _, warnings := Validate(cfg); !hasKeyWarn(warnings) {
@@ -197,8 +198,63 @@ func TestValidateAgentKeyProbe(t *testing.T) {
 	}
 }
 
+// testListen returns a free loopback address so the listen probe never
+// collides with whatever else is running on the machine.
+func testListen(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot grab a port: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	return addr
+}
+
 func mustProblems(t *testing.T, cfg *Config) []string {
 	t.Helper()
 	p, _ := Validate(cfg)
 	return p
+}
+
+func TestValidateListenInUseWarns(t *testing.T) {
+	// hold a real port so the probe must fail: boot would die with a
+	// bare "address already in use", check names it up front
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot bind: %v", err)
+	}
+	defer ln.Close()
+	cfg := &Config{
+		Agents:       []AgentConfig{{Name: "a", APIKey: "k"}},
+		DefaultAgent: "a",
+		HTTP:         HTTPConfig{Listen: ln.Addr().String()},
+		DataDir:      t.TempDir(),
+	}
+	problems, warnings := Validate(cfg)
+	if len(problems) != 0 {
+		t.Fatalf("busy port is advisory: %v", problems)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "fail to bind") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no bind warning among %v", warnings)
+	}
+}
+
+func TestValidateUnknownProviderSuggests(t *testing.T) {
+	cfg := &Config{
+		Agents:       []AgentConfig{{Name: "a", Provider: "opena", APIKey: "k"}},
+		DefaultAgent: "a",
+		HTTP:         HTTPConfig{Listen: testListen(t)},
+		DataDir:      t.TempDir(),
+	}
+	got := strings.Join(mustProblems(t, cfg), "\n")
+	if !strings.Contains(got, "openai") || !strings.Contains(got, "did you mean") {
+		t.Fatalf("provider typo should suggest: %v", got)
+	}
 }

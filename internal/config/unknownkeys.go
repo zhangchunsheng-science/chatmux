@@ -102,10 +102,21 @@ func walk(desc any, node any, path string, out *[]string) {
 // suggest finds the intended key for a typo: a case-insensitive exact
 // match, or a close edit-distance match for reasonably long keys.
 func suggest(typo string, fields map[string]any) string {
-	best, bestDist := "", 3 // > max distance we'll suggest
+	known := make([]string, 0, len(fields))
 	for k := range fields {
+		known = append(known, k)
+	}
+	return Suggest(typo, known)
+}
+
+// Suggest returns "" or a " (did you mean ...?)" hint for typo against
+// the known vocabulary — shared by config-key, provider and channel
+// type checks.
+func Suggest(typo string, known []string) string {
+	best, bestDist := "", 3 // > max distance we'll suggest
+	for _, k := range known {
 		if strings.EqualFold(k, typo) {
-			return fmt.Sprintf(" (did you mean %q? JSON keys are case-sensitive)", k)
+			return fmt.Sprintf(" (did you mean %q? names are case-sensitive)", k)
 		}
 		if len(k) < 4 || len(typo) < 4 {
 			continue

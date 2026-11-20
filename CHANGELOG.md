@@ -3,6 +3,16 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.45（对齐循环第 65 轮）
+
+check 启动前最后一公里——(a) 监听端口占用预警：bind 失败（双实例最常
+见的死法、权限不足）以前要到启动那一刻才见裸报错，现在 check 预先点名
+"http.listen ... address already in use — the server would fail to bind"
+（建议性，探测即释放）；(b) 未知 provider 与通道类型给拼写建议（"opena"→
+openai、"feisu"→feishu），levenshtein 建议器提炼为 config.Suggest 共用。
+测试 fixture 全部换临时端口（原硬编码 :8080 会随端口探测随机 flake——
+本轮差点自己踩上）。实测四类问题一屏全中。
+
 ## v0.6.44（对齐循环第 64 轮）
 
 healthz 降级点名——/healthz 降级时原来只有一句 "degraded"，现在点名坏

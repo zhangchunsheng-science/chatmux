@@ -349,9 +349,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - **冒烟**：`scripts/smoke.sh`——本地端到端（构建→check→起实例→成功轮
   +失败轮→记账核对→优雅停机），零凭据零外网
 - **配置体检**：`chatmux check chatmux.json`——启动前全量校验（未知通
-  道/路由、cron 表达式、CLI 配置、重复名）；拼写错的键名（`apikey`/`lisen`
-  这类被 JSON 解码器静默丢弃的）按路径点名并给近似建议；dataDir 不可写、
-  模型 agent 无 apiKey 且对应环境变量未设等运行期隐患预警但不阻启
+  道/路由、cron 表达式、CLI 配置、重复名，未知 provider/通道类型给拼写
+  建议）；拼写错的键名（`apikey`/`lisen` 这类被 JSON 解码器静默丢弃的）
+  按路径点名并给近似建议；dataDir 不可写、模型 agent 无 apiKey 且对应
+  环境变量未设、监听端口已被占（双实例最常见的死法）预警但不阻启
 
 ## 各平台接入要点
 
@@ -379,6 +380,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.45（对齐循环第 65 轮）：check 最后一公里——监听端口占用预警
+（双实例死法启动前点名）+ 未知 provider/通道类型拼写建议（建议器提炼
+config.Suggest 共用）。
+
 v0.6.44（对齐循环第 64 轮）：healthz 降级点名坏通道——
 `degraded: slack, tg1` 直接进探测响应；纯函数化 + 假通道单测 +
 smoke 实例实测。
@@ -397,9 +402,5 @@ v0.6.41（对齐循环第 61 轮）：自更新绝不降级——版本按数值
 v0.6.40（对齐循环第 60 轮）：配置键名拼写守护——check 按路径点名被
 JSON 解码器静默丢弃的拼写错误键（apikey/lisen 类）并给近似建议；期望
 键集反射自真实 struct，不会漂移。
-
-v0.6.39（对齐循环第 59 轮）：chatmux check 密钥预警——模型 agent 无
-apiKey 且环境变量未设（运行时必 401）启动前警告；README 补「配置体检」
-条目。
 
 MIT
