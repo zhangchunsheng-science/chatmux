@@ -219,3 +219,48 @@ func TestApplyNoSidecarSkipsCheck(t *testing.T) {
 		t.Fatalf("legacy release without sidecar must still update: %v", err)
 	}
 }
+
+func TestNewerVersion(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"0.6.10", "0.6.9", true},   // the classic string-compare trap
+		{"0.6.9", "0.6.10", false},  //
+		{"0.6.9", "0.6.9", false},   // equal is not newer
+		{"0.7.0", "0.6.40", true},   //
+		{"0.6.40", "0.7.0", false},  //
+		{"1.0.0", "0.9.99", true},   //
+		{"0.6", "0.6.1", false},     // shorter loses to longer suffix
+		{"0.6.1", "0.6", true},      //
+		{"0.6.10", "0.6.10", false}, //
+	}
+	for _, c := range cases {
+		if got := newerVersion(c.a, c.b); got != c.want {
+			t.Errorf("newerVersion(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestApplyNeverDowngrades(t *testing.T) {
+	// /releases/latest pointing at an OLDER tag (re-published old
+	// release, local build ahead of releases) must be a no-op, not a
+	// rollback — the running binary stays untouched
+	archive := tarGz(t, "chatmux-bin", "OLDER-BUILD")
+	ts := applyServer(t, "v0.6.9", archive, nil)
+	defer ts.Close()
+
+	exe := filepath.Join(t.TempDir(), "fake-chatmux")
+	os.WriteFile(exe, []byte("NEW"), 0o755)
+	res, err := apply(context.Background(), httpFetcher, ts.URL+"/meta", runtime.GOOS, runtime.GOARCH, "0.6.40", exe)
+	if err != nil {
+		t.Fatalf("older release must not error: %v", err)
+	}
+	if !res.UpToDate {
+		t.Fatalf("older release reported not up-to-date: %+v", res)
+	}
+	got, _ := os.ReadFile(exe)
+	if string(got) != "NEW" {
+		t.Fatalf("exe downgraded: %q", got)
+	}
+}

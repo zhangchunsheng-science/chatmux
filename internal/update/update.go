@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/version"
@@ -124,6 +125,36 @@ func extractZip(body []byte) ([]byte, error) {
 	return nil, errors.New("no chatmux binary in zip")
 }
 
+// newerVersion reports whether a > b as chatmux versions: numeric
+// dot-segments compared as integers (v0.6.9 vs v0.6.10 must not fall
+// into string comparison). Non-numeric segments fall back to string
+// order, which only matters for exotic local builds.
+func newerVersion(a, b string) bool {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var sa, sb string
+		if i < len(as) {
+			sa = as[i]
+		}
+		if i < len(bs) {
+			sb = bs[i]
+		}
+		na, ea := strconv.Atoi(sa)
+		nb, eb := strconv.Atoi(sb)
+		switch {
+		case ea == nil && eb == nil:
+			if na != nb {
+				return na > nb
+			}
+		default:
+			if sa != sb {
+				return sa > sb
+			}
+		}
+	}
+	return false
+}
+
 // Result reports what Apply did.
 type Result struct {
 	UpToDate bool
@@ -155,7 +186,10 @@ func apply(ctx context.Context, fetch fetcher, metaURL, goos, goarch, current, e
 	}
 	latest := strings.TrimPrefix(rel.TagName, "v")
 	res := Result{From: current, To: latest}
-	if latest == "" || latest == current {
+	if latest == "" || !newerVersion(latest, current) {
+		// equal or older: never silently downgrade — an older
+		// /releases/latest (re-published old tag, local build ahead
+		// of releases) is a no-op, not a rollback
 		res.UpToDate = true
 		return res, nil
 	}
