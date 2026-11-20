@@ -506,11 +506,13 @@ func runServer(cfgPath string) int {
 	for _, cc := range cfg.Channels {
 		f, ok := factories[cc.Type]
 		if !ok {
-			log.Fatalf("unknown channel type %q", cc.Type)
+			fmt.Fprintln(os.Stderr, "unknown channel type "+strconv.Quote(cc.Type))
+			return 1
 		}
 		ch, err := f(cc.Options)
 		if err != nil {
-			log.Fatalf("channel %s: %v", cc.Name, err)
+			fmt.Fprintf(os.Stderr, "channel %s: %v\n", cc.Name, err)
+			return 1
 		}
 		if n, ok := ch.(interface{ SetName(string) }); ok {
 			n.SetName(cc.Name)
@@ -595,10 +597,12 @@ func runServer(cfgPath string) int {
 			continue
 		}
 		if _, chOk := chans[cc.Channel]; !chOk {
-			log.Fatalf("cron %s: unknown channel %q", cc.Name, cc.Channel)
+			fmt.Fprintf(os.Stderr, "cron %s: unknown channel %q\n", cc.Name, cc.Channel)
+			return 1
 		}
 		if _, err := cron.Next(time.Now(), cc.Schedule); err != nil {
-			log.Fatalf("cron %s: %v", cc.Name, err)
+			fmt.Fprintf(os.Stderr, "cron %s: %v\n", cc.Name, err)
+			return 1
 		}
 		entry := cc
 		sched.Add(cron.Entry{
@@ -790,6 +794,7 @@ func superviseChannel(ctx context.Context, c channel.Channel, inbound chan<- cha
 		if err != nil && ctx.Err() == nil {
 			log.Printf("channel %s exited after %s: %v — restarting in %s",
 				c.Name(), ran.Round(time.Second), err, backoff)
+			metrics.ChannelRestart()
 		}
 		select {
 		case <-ctx.Done():
@@ -970,11 +975,13 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		gauge("chatmux_turns_in_flight", "Foreground turns currently running.", toF(st["turnsInFlight"]))
 		gauge("chatmux_bg_jobs_active", "Background jobs currently running.", float64(len(toI(st["backgroundJobs"]))))
 		gauge("chatmux_uptime_seconds", "Seconds since server start.", time.Since(started).Seconds())
-		wdFires, sRetries := metrics.Snapshot()
+		wdFires, sRetries, cRestarts := metrics.Snapshot()
 		b.WriteString("# HELP chatmux_turn_watchdog_fires_total Turns cancelled by the turn-budget watchdog.\n# TYPE chatmux_turn_watchdog_fires_total counter\n" +
 			fmt.Sprintf("chatmux_turn_watchdog_fires_total %d\n", wdFires))
 		b.WriteString("# HELP chatmux_stream_retries_total Model stream starts retried after transient failure.\n# TYPE chatmux_stream_retries_total counter\n" +
 			fmt.Sprintf("chatmux_stream_retries_total %d\n", sRetries))
+		b.WriteString("# HELP chatmux_channel_reconnects_total Channel adapter exits followed by a backoff reconnect.\n# TYPE chatmux_channel_reconnects_total counter\n" +
+			fmt.Sprintf("chatmux_channel_reconnects_total %d\n", cRestarts))
 
 		aggs, err := usage.Summarize(cfg.DataDir)
 		if err == nil {

@@ -329,7 +329,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   被转为错误走指数退避重连，turn/bg 任务 panic 被 recover 并清理登记——
   单点崩溃不再带走整个进程
 - `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
-  每 agent 调用数与 token、👍/👎 总量、uptime、看门狗触发数、流启动重试数
+  每 agent 调用数与 token、👍/👎 总量、uptime、看门狗触发数、流启动重试数、
+  通道退避重连数（攀升=凭据失效或上游抖动）
 - `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）；
   `/admin/send` 带可选 `file` 字段即上传宿主文件到聊天（飞书/Telegram/
   Discord/Slack 支持，图片自动按照片/图片发）
@@ -382,6 +383,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.48（对齐循环第 68 轮）：通道退避重连计数上指标
+（chatmux_channel_reconnects_total，攀升=凭据失效/上游抖动）；runServer
+启动期四处 log.Fatalf 清零，测试进程再无被杀路径。
+
 v0.6.47（对齐循环第 67 轮）：CI flake 根因——runServer bind 失败原走
 log.Fatalf 杀整进程（临时端口被抢时测试二进制陪葬、无 FAIL 注解）；
 改同步绑定+优雅停机返回码，两轮神秘 CI 失败的签名终于对上。
@@ -401,9 +406,5 @@ smoke 实例实测。
 v0.6.43（对齐循环第 63 轮）：/metrics 渲染守护——源码提取全部
 chatmux_* 指标族逐个断言活体输出在列，静默丢序列变测试失败；附 fd
 泄漏审计（20 处 HTTP 调用点全干净）。
-
-v0.6.42（对齐循环第 62 轮）：panic 隔离——通道适配器 panic 转错误走
-退避重连、turn/bg 任务 panic 被 recover 且 defer 清理（不 wedge 聊天、
-不挂死停机、不 leak 任务表）；单点崩溃不再带走整个进程。-race 全量绿。
 
 MIT

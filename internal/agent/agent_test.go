@@ -1048,7 +1048,7 @@ func TestTurnWatchdogUnblocksChat(t *testing.T) {
 	s := &fakeSender{}
 	rt.chans["feishu"] = &stubChannel{sender: s}
 
-	wd0, _ := metrics.Snapshot()
+	wd0, _, _ := metrics.Snapshot()
 	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "挂死"})
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && rt.Busy() > 0 {
@@ -1057,7 +1057,7 @@ func TestTurnWatchdogUnblocksChat(t *testing.T) {
 	if rt.Busy() != 0 {
 		t.Fatal("watchdog did not release the wedged turn")
 	}
-	if wd, _ := metrics.Snapshot(); wd == wd0 {
+	if wd, _, _ := metrics.Snapshot(); wd == wd0 {
 		t.Fatal("watchdog fire not counted in metrics")
 	}
 	// the cancelled turn is accounted as a failed call
@@ -1163,12 +1163,12 @@ func (f *flakyProvider) Stream(ctx context.Context, _ provider.Request) (<-chan 
 func TestStreamRetryRecovers(t *testing.T) {
 	fp := &flakyProvider{}
 	// unit: one blip, then success
-	_, sr0 := metrics.Snapshot()
+	_, sr0, _ := metrics.Snapshot()
 	ch, err := streamWithRetry(context.Background(), fp, provider.Request{})
 	if err != nil {
 		t.Fatalf("retry did not recover: %v", err)
 	}
-	if _, sr := metrics.Snapshot(); sr == sr0 {
+	if _, sr, _ := metrics.Snapshot(); sr == sr0 {
 		t.Fatal("stream retry not counted in metrics")
 	}
 	var got string

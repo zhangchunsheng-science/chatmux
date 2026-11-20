@@ -3,6 +3,15 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.48（对齐循环第 68 轮）
+
+通道退避重连上指标——chatmux_channel_reconnects_total：通道适配器带错
+退出并进入退避重连时 +1。攀升速率是凭据失效或上游抖动的信号（不是负
+载），与看门狗/流重试凑齐三类韧性事件的全覆盖；/metrics 渲染守护测试
+自动纳入新族。附带收尾第 67 轮教训：runServer 启动期四处 log.Fatalf
+（未知通道类型/通道构造失败/cron 未知通道/cron 表达式非法）全部改为
+stderr + 返回码 1——CLI 行为不变，测试与嵌入方进程不再有被杀路径。
+
 ## v0.6.47（对齐循环第 67 轮）
 
 CI flake 根因修复——runServer 的 http bind 失败走 log.Fatalf，会直接杀

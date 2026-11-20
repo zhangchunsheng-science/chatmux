@@ -17,6 +17,7 @@ import (
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
+	"github.com/zhangchunsheng-science/chatmux/internal/metrics"
 )
 
 func TestLoadSkills(t *testing.T) {
@@ -223,6 +224,9 @@ func TestSuperviseChannelSurvivesPanic(t *testing.T) {
 	<-done
 	if n := atomic.LoadInt32(&pc.calls); n < 2 {
 		t.Fatalf("channel restarted %d times after panic, want ≥2 — panic would have killed the process before", n)
+	}
+	if _, _, cr := metrics.Snapshot(); cr < 1 {
+		t.Fatalf("channel reconnect counter = %d, want ≥1 after the panic restart", cr)
 	}
 }
 
