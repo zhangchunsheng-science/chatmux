@@ -22,13 +22,17 @@ type Fire func(name, prompt string)
 type Watcher struct {
 	mu    sync.Mutex
 	state map[string]string // name → last content ("" = not yet seen)
+	// unreadable records entries whose last poll failed to read: the
+	// transition is logged once (not once per tick), so a permission
+	// change or stale mount surfaces in the log without spamming it.
+	unreadable map[string]bool
 
 	entries []config.DocWatchConfig
 	fire    Fire
 }
 
 func New(entries []config.DocWatchConfig, fire Fire) *Watcher {
-	return &Watcher{state: map[string]string{}, entries: entries, fire: fire}
+	return &Watcher{state: map[string]string{}, unreadable: map[string]bool{}, entries: entries, fire: fire}
 }
 
 // Start polls until ctx is done. Entries sharing an interval tick
@@ -70,9 +74,28 @@ func (w *Watcher) Start(ctx context.Context) {
 func (w *Watcher) Poll(e config.DocWatchConfig) {
 	content, err := os.ReadFile(e.Path)
 	if err != nil {
-		return // missing/unreadable: skip silently, keep last state
+		// missing/unreadable: skip, keep last state — but say so once
+		// per transition, or a permission change silently freezes the
+		// watcher and no change ever fires again
+		w.mu.Lock()
+		if !w.unreadable[e.Name] {
+			w.unreadable[e.Name] = true
+			w.mu.Unlock()
+			log.Printf("docwatch %s: cannot read %s (%v) — holding last state until readable", e.Name, e.Path, err)
+			return
+		}
+		w.mu.Unlock()
+		return
 	}
 	cur := string(content)
+	w.mu.Lock()
+	if w.unreadable[e.Name] {
+		w.unreadable[e.Name] = false
+		w.mu.Unlock()
+		log.Printf("docwatch %s: readable again, resuming", e.Name)
+	} else {
+		w.mu.Unlock()
+	}
 	w.mu.Lock()
 	prev, seen := w.state[e.Name]
 	w.state[e.Name] = cur

@@ -1,7 +1,9 @@
 package docwatch
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,5 +132,51 @@ func TestDiffHugeRewriteBounded(t *testing.T) {
 	d = DiffExcerpt("base\n", newB.String(), 60)
 	if !strings.Contains(d, "节选") || !strings.Contains(d, "+ new-") {
 		t.Errorf("huge insertion excerpt wrong:\n%.200s", d)
+	}
+}
+
+// A watched file losing readability mid-run must surface in the log
+// exactly once (not once per tick), and recovery must be logged too —
+// otherwise a permission change silently freezes the watcher forever.
+func TestPollUnreadableTransitionLogged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(path, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	w := New(nil, func(string, string) {})
+	e := config.DocWatchConfig{Name: "notes", Path: path}
+	w.Poll(e) // baseline
+	if s := buf.String(); s != "" {
+		t.Fatalf("baseline poll logged: %q", s)
+	}
+
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Skipf("cannot chmod: %v", err)
+	}
+	w.Poll(e)
+	first := buf.String()
+	if !strings.Contains(first, "cannot read") {
+		t.Fatalf("unreadable transition not logged: %q", first)
+	}
+	buf.Reset()
+	w.Poll(e) // still unreadable: silent
+	if s := buf.String(); s != "" {
+		t.Fatalf("repeat unreadable poll logged again: %q", s)
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.Poll(e)
+	if s := buf.String(); !strings.Contains(s, "readable again") {
+		t.Fatalf("recovery not logged: %q", s)
 	}
 }
