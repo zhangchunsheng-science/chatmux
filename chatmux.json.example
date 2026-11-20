@@ -38,7 +38,7 @@
         "agentId": 1000002,
         "secret": "xxxx",
         "token": "xxxx",
-        "encodingAesKey": "43chars",
+        "encodingAesKey": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
         "callbackPath": "/wecom/callback",
         "allowUsers": []
       }

@@ -127,6 +127,13 @@ func (r *Runner) Reset(anchor string) {
 	r.save()
 }
 
+// CheckConfig validates a CLI config's invocation shape (type, binary)
+// without running anything — used by `chatmux check`.
+func CheckConfig(cfg Config) error {
+	_, _, _, err := buildInvocation(cfg, "", "ping")
+	return err
+}
+
 // Config describes how to invoke one CLI.
 type Config struct {
 	Type       string `json:"type"`  // claude | codex | gemini | qwen | opencode | aider | generic

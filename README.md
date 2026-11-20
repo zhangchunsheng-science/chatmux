@@ -365,6 +365,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.25（对齐循环第 47 轮）：`chatmux check`——配置校验子命令：agents/
+routes/cron/workflows/docwatch/i18n/http 语义检查 + 各通道真实构造（凭据
+形状、AES key 长度等启动时才爆的错提前暴露），docwatch 路径未就绪为警告。
+顺手修了 example 两处自查发现：wecom 占位 AES key 长度非法、docwatch 示
+例路径说明。example 现在 check 全绿。
+
 v0.6.24（对齐循环第 46 轮）：cli-sessions.json 封顶——CLI 恢复 id 表原来
 无界增长；现每条带时间戳、超 2000 条按最陈旧淘汰，旧纯字符串格式自动迁
 移。顺带复检：全部包 -race 与 -count=2 全绿（自第 34 轮以来又改过多处

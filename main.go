@@ -88,6 +88,13 @@ func runClient(args []string, cfgPath string) int {
 	case "version":
 		fmt.Printf("chatmux v%s (%s/%s)\n", version.Version, runtime.GOOS, runtime.GOARCH)
 		return 0
+	case "check":
+		// `chatmux check [path]` — default path from -config
+		path := cfgPath
+		if len(args) > 1 {
+			path = args[1]
+		}
+		return runCheck(path)
 	case "update":
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
@@ -395,6 +402,50 @@ func adminReq(method, url, token string, body []byte) ([]byte, int, error) {
 
 // ---- server mode ----
 
+// channelFactories maps config type → constructor; shared by the server
+// boot and `chatmux check`.
+var channelFactories = map[string]func(opts json.RawMessage) (channel.Channel, error){
+	"feishu":   feishu.New,
+	"dingtalk": dingtalk.New,
+	"wecom":    wecom.New,
+	"telegram": telegram.New,
+	"discord":  discord.New,
+	"slack":    slack.New,
+}
+
+// runCheck validates a config file end to end without starting anything:
+// semantic checks (agents/routes/cron/...) plus real channel construction.
+func runCheck(cfgPath string) int {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	problems, warnings := config.Validate(cfg)
+	for i, cc := range cfg.Channels {
+		f, ok := channelFactories[cc.Type]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("channels[%d] %q: unknown type %q", i, cc.Name, cc.Type))
+			continue
+		}
+		if _, err := f(cc.Options); err != nil {
+			problems = append(problems, fmt.Sprintf("channels[%d] %q: %v", i, cc.Name, err))
+		}
+	}
+	for _, w := range warnings {
+		fmt.Printf("⚠ %s\n", w)
+	}
+	if len(problems) == 0 {
+		fmt.Printf("✓ %s：配置有效（%d 通道 %d agent %d cron）\n", cfgPath, len(cfg.Channels), len(cfg.Agents), len(cfg.Cron))
+		return 0
+	}
+	for _, p := range problems {
+		fmt.Printf("✗ %s\n", p)
+	}
+	fmt.Fprintf(os.Stderr, "%d 个问题\n", len(problems))
+	return 1
+}
+
 func runServer(cfgPath string) int {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -408,14 +459,7 @@ func runServer(cfgPath string) int {
 	registry.Register(&provider.Anthropic{APIKey: os.Getenv("ANTHROPIC_API_KEY")})
 
 	// ---- channels ----
-	factories := map[string]func(opts json.RawMessage) (channel.Channel, error){
-		"feishu":   feishu.New,
-		"dingtalk": dingtalk.New,
-		"wecom":    wecom.New,
-		"telegram": telegram.New,
-		"discord":  discord.New,
-		"slack":    slack.New,
-	}
+	factories := channelFactories
 	chans := map[string]channel.Channel{}
 	var mux http.ServeMux
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
