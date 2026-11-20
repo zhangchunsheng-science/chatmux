@@ -3,6 +3,20 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.56（对齐循环第 76 轮）
+
+持久化原子写修复（真 bug）。四处状态持久化（sessions.json、去重缓存、
+cli-sessions.json、用户 schedules）全是 `tmp := path + ".tmp"` 固定临时名：
+write→rename 各自原子，但两个并发保存会打开同一个 .tmp 交错写字节，先完成的
+rename 把混合物发布出去。session 每轮 turn 都 `go Save()`，多聊天并发时必然
+踩中；损坏的 sessions.json 被 LoadSessions 按设计静默吞掉（未知/损坏文件=
+空库起步）——全部对话蒸发且没有任何报错。收敛到新 internal/atomicfile 包：
+CreateTemp 唯一临时名 + 写 + Close + chmod + rename，并发时最后者胜（最多
+旧一份完整快照，永不撕裂）。守护测试：atomicfile 并发 4 写者+热读者，任何
+一次读到坏 JSON 即败、结尾无临时文件残留；session 层 24 路并发 Save 后
+sessions.json 完整可解。审计顺带确认：provider HTTP（ctx 全链路+10min 兜底）、
+六通道下载（ctx+30s 客户端）超时卫生全干净。
+
 ## v0.6.55（对齐循环第 75 轮）
 
 CI 注解方案返工。第 73 轮的 problem matcher 方案栽在 schema：file 字段

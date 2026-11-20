@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zhangchunsheng-science/chatmux/internal/atomicfile"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
 
@@ -72,11 +73,7 @@ func (s *Store) Save(dataDir string) error {
 		return err
 	}
 	p := filepath.Join(dataDir, "sessions.json")
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return atomicfile.Write(p, b, 0o600)
 }
 
 // LoadSessions restores sessions saved by Save. Unknown/corrupt file is

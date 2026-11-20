@@ -1,9 +1,11 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,5 +126,42 @@ func TestAppendStampsLastUsed(t *testing.T) {
 	s.mu.Unlock()
 	if stamp.Before(old.Add(time.Hour)) {
 		t.Fatalf("LastUsed not stamped: %v", stamp)
+	}
+}
+
+// Concurrent Save calls (every turn fires one asynchronously) must
+// never corrupt sessions.json: with the old fixed "<path>.tmp", two
+// overlapping saves interleaved bytes in one temp file and the rename
+// published the mixture — a corrupt file that LoadSessions silently
+// swallows by starting empty.
+func TestSaveConcurrentDoesNotCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore()
+	for i := 0; i < 5; i++ {
+		key := Key{Channel: "web", ChatID: fmt.Sprintf("c%d", i)}
+		sess := s.Get(key)
+		sess.History = append(sess.History, provider.Msg{Role: "user", Content: "hi"})
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.Save(dir); err != nil {
+				t.Errorf("save: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	b, err := os.ReadFile(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var in map[string]json.RawMessage
+	if err := json.Unmarshal(b, &in); err != nil {
+		t.Fatalf("sessions.json corrupt after concurrent saves: %v", err)
+	}
+	if len(in) != 5 {
+		t.Fatalf("restored %d sessions, want 5", len(in))
 	}
 }

@@ -5,6 +5,8 @@
 package cliagent
 
 import (
+	"github.com/zhangchunsheng-science/chatmux/internal/atomicfile"
+
 	"bufio"
 	"context"
 	"encoding/json"
@@ -96,10 +98,7 @@ func (r *Runner) save() {
 	if err != nil {
 		return
 	}
-	tmp := r.persist + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, r.persist)
-	}
+	_ = atomicfile.Write(r.persist, b, 0o600)
 }
 
 // ResumeID returns the stored CLI session id for an anchor.

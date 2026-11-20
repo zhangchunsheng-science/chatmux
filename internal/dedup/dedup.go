@@ -7,6 +7,8 @@
 package dedup
 
 import (
+	"github.com/zhangchunsheng-science/chatmux/internal/atomicfile"
+
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -96,10 +98,7 @@ func (s *Store) flushLocked() {
 	if err != nil {
 		return
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return
+	if atomicfile.Write(s.path, b, 0o600) == nil {
+		s.dirty = false
 	}
-	_ = os.Rename(tmp, s.path)
-	s.dirty = false
 }

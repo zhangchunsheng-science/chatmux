@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zhangchunsheng-science/chatmux/internal/atomicfile"
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/cron"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
@@ -78,10 +79,7 @@ func (r *Runtime) saveSchedules() {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(r.schedPath()), 0o755)
-	tmp := r.schedPath() + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, r.schedPath())
-	}
+	_ = atomicfile.Write(r.schedPath(), b, 0o600)
 }
 
 // handleSchedule implements /schedule [add <when> <text> | del <id> | list].

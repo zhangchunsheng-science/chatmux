@@ -378,7 +378,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - 群聊默认 @ 门控；CLI agent 的 `workingDir` 决定它能碰哪些文件
 - 飞书 webhook 模式实现 sha256(timestamp+nonce+encryptKey+body) 验签 + ±1h 时间窗
 - 企业微信回调按官方 AES-256-CBC + SHA1 签名规范，任何不匹配直接 403
-- 会话去重存储与状态文件落在 `dataDir`（默认 `data/`），权限 0600
+- 会话去重存储与状态文件落在 `dataDir`（默认 `data/`），权限 0600，原子写
+  （唯一临时文件 + rename，并发保存不交错）
 - 图片下载：飞书按 image_key 走 im 资源接口、Telegram 走 getFile、Slack
   带 bot token 拉 url_private、企微按 media_id 走 media/get、钉钉按
   downloadCode 走 messageFiles/download（需配 robotCode）、Discord 直接
@@ -389,6 +390,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   过期删除只花一次重新下载，不会弄坏进行中的会话
 
 ## 状态
+
+v0.6.56（对齐循环第 76 轮）：持久化原子写修复——四个状态文件（sessions/
+dedup/cli-sessions/schedules）原来共用固定 `<path>.tmp`，每轮 turn 异步保存，
+并发时两个 goroutine 交错写同一临时文件再 rename，损坏的 sessions.json 被
+Load 静默吞掉=全部对话蒸发且无报错。收敛到 internal/atomicfile（唯一临时名），
+并发撕裂测试（4 写者+热读者，损坏即败）+ 并发 Save 回归守护。
 
 v0.6.55（对齐循环第 75 轮）：CI 注解方案返工——problem matcher 的 file 字段
 必须是捕获组索引而非字面路径，"file": "go.mod" 让 add-matcher 直接报错、
@@ -415,9 +422,5 @@ v0.6.51（对齐循环第 71 轮）：附件保留期——`dataDir/attachments/
 只进不出（图片/语音按内容哈希落盘、全仓库无一处删除），补 `attachmentRetention`
 （默认 72h，"0" 关闭）：启动即清扫 + 每小时一轮，过期删除；文件按需重取，
 只花一次重新下载。至此会话/usage/去重/cli-sessions/附件五类磁盘增长全部封顶。
-
-v0.6.50（对齐循环第 70 轮）：check 新增 admin 面预警——adminToken 为空
-且监听非回环地址时点名 `/admin/*`（chat/stop/send）将对所有能访问端口
-的调用者开放（chat 花的是你配的 API key）；回环或带 token 则静默。
 
 MIT
