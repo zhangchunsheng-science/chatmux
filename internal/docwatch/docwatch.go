@@ -98,19 +98,40 @@ type op struct {
 	line string
 }
 
-// diffLines computes an LCS line diff (DP, bounded to 4000 lines/side).
-func diffLines(a, b []string) []op {
-	if len(a) > 4000 {
-		a = a[len(a)-4000:]
+// diffLines computes an LCS line diff. Common prefix/suffix lines are
+// skipped first: append-only files (logs, notes) are then a near-empty
+// middle, and an edit near the top of a long file is detected — the
+// old tail-only 4000-line cap made every line above the tail invisible.
+// The remaining middle is capped to 500 head + 500 tail lines per side
+// and the DP runs on int32: worst case ~1M cells (~4MB transient)
+// instead of the old 4001×4001 int table (~128MB) per wholesale
+// rewrite. The bool reports whether that cap engaged.
+func diffLines(a, b []string) ([]op, bool) {
+	pre := 0
+	for pre < len(a) && pre < len(b) && a[pre] == b[pre] {
+		pre++
 	}
-	if len(b) > 4000 {
-		b = b[len(b)-4000:]
+	suf := 0
+	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
+		suf++
+	}
+	a = a[pre : len(a)-suf]
+	b = b[pre : len(b)-suf]
+
+	const side = 500
+	trimmed := len(a) > side*2 || len(b) > side*2
+	if len(a) > side*2 {
+		a = append(a[:side], a[len(a)-side:]...) // memmove: overlap-safe
+	}
+	if len(b) > side*2 {
+		b = append(b[:side], b[len(b)-side:]...)
 	}
 	n, m := len(a), len(b)
-	// lcs[i][j] = LCS length of a[i:], b[j:]
-	lcs := make([][]int, n+1)
+	// lcs[i][j] = LCS length of a[i:], b[j:] — one flat backing array
+	lcs := make([][]int32, n+1)
+	rows := make([]int32, (n+1)*(m+1))
 	for i := range lcs {
-		lcs[i] = make([]int, m+1)
+		lcs[i] = rows[i*(m+1) : (i+1)*(m+1)]
 	}
 	for i := n - 1; i >= 0; i-- {
 		for j := m - 1; j >= 0; j-- {
@@ -144,7 +165,7 @@ func diffLines(a, b []string) []op {
 	for ; j < m; j++ {
 		out = append(out, op{'+', b[j]})
 	}
-	return out
+	return out, trimmed
 }
 
 // DiffExcerpt renders the changed lines (no context), capped at max
@@ -153,7 +174,7 @@ func DiffExcerpt(oldContent, newContent string, max int) string {
 	if max <= 0 {
 		max = 60
 	}
-	ops := diffLines(strings.Split(oldContent, "\n"), strings.Split(newContent, "\n"))
+	ops, trimmed := diffLines(strings.Split(oldContent, "\n"), strings.Split(newContent, "\n"))
 	var add, del int
 	for _, o := range ops {
 		if o.kind == '+' {
@@ -169,6 +190,9 @@ func DiffExcerpt(oldContent, newContent string, max int) string {
 		return b.String()
 	}
 	b.WriteString("+ 新增 / - 删除（最多展示前 " + itoa(max) + " 处）\n")
+	if trimmed {
+		b.WriteString("（大幅改写，统计为节选范围）\n")
+	}
 	shown := 0
 	for _, o := range ops {
 		if shown >= max {

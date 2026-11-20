@@ -1,6 +1,7 @@
 package docwatch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,5 +83,52 @@ func TestPollFiresOnChange(t *testing.T) {
 	w.Poll(config.DocWatchConfig{Name: "plan", Path: path})
 	if len(fired) != 2 || !strings.Contains(fired[1], "plan") {
 		t.Fatalf("default prompt wrong: %v", fired)
+	}
+}
+
+// An edit near the top of a long file must be visible in the excerpt.
+// The old tail-only 4000-line cap diffed only the file's last 4000
+// lines, so edits above them were silently reported as no change.
+func TestDiffEarlyChangeVisible(t *testing.T) {
+	var oldB, newB strings.Builder
+	for i := 1; i <= 5000; i++ {
+		if i == 2 {
+			oldB.WriteString("line-two-original\n")
+			newB.WriteString("line-two-CHANGED\n")
+		} else {
+			fmt.Fprintf(&oldB, "line-%d\n", i)
+			fmt.Fprintf(&newB, "line-%d\n", i)
+		}
+	}
+	d := DiffExcerpt(oldB.String(), newB.String(), 10)
+	if !strings.Contains(d, "- line-two-original") || !strings.Contains(d, "+ line-two-CHANGED") {
+		t.Errorf("early edit lost from diff:\n%.300s", d)
+	}
+	if strings.Contains(d, "line-4000") {
+		t.Errorf("unchanged far-away lines leaked into excerpt:\n%.300s", d)
+	}
+}
+
+// A wholesale rewrite of a huge file must stay cheap and honest: the
+// middle is capped to 1000 lines/side before an int32 DP (the old
+// 4001×4001 int table allocated ~128MB per such poll), and the header
+// must flag that the counts cover an excerpt, not the whole rewrite.
+func TestDiffHugeRewriteBounded(t *testing.T) {
+	var oldB, newB strings.Builder
+	for i := 0; i < 50000; i++ {
+		fmt.Fprintf(&oldB, "old-%d\n", i)
+		fmt.Fprintf(&newB, "new-%d\n", i)
+	}
+	d := DiffExcerpt(oldB.String(), newB.String(), 60)
+	if !strings.Contains(d, "节选") {
+		t.Errorf("huge rewrite should be flagged as excerpted:\n%.200s", d)
+	}
+	if !strings.Contains(d, "- old-") { // walk emits deletes first when LCS is empty
+		t.Errorf("excerpt missing change lines:\n%.200s", d)
+	}
+	// pure insertion: the '+' path of the same capped machinery
+	d = DiffExcerpt("base\n", newB.String(), 60)
+	if !strings.Contains(d, "节选") || !strings.Contains(d, "+ new-") {
+		t.Errorf("huge insertion excerpt wrong:\n%.200s", d)
 	}
 }
