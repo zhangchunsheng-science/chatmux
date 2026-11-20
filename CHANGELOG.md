@@ -3,6 +3,18 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.55（对齐循环第 75 轮）
+
+CI 注解方案返工。第 73 轮的 problem matcher 方案栽在 schema：file 字段
+必须是捕获组索引（整数），写字面路径 "go.mod" 让 add-matcher 步骤抛
+"Could not convert string to integer"，v0.6.53 与 v0.6.54 的 ci 因此双双
+转红——讽刺的是这正是新注解第一次实战就抓到的“真凶”（release 流水线
+不受 ci 影响，两个 tag 的 12 资产均齐全）。返工：删 matcher，go test 与
+smoke 输出 tee 到日志文件，失败时 `if: failure()` 步骤把 `--- FAIL:`/
+`FAIL\t包名`/`panic:`/smoke `FAIL:` 行以 `::error file=go.mod,line=1::`
+工作流命令直发为注解——原生能力，无 schema 陷阱，匿名 annotations API
+照读。本地干跑验证四类行全部转出注解。
+
 ## v0.6.54（对齐循环第 74 轮）
 
 docwatch 可读性转移日志。被监控文件中途失去可读性（chmod、属主变化、

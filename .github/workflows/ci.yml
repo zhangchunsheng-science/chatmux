@@ -13,14 +13,27 @@ jobs:
         with:
           go-version: "1.21"
       - run: go vet ./...
-      - run: echo "::add-matcher::.github/matchers/gotest.json"
-      - run: go test ./...
-      - run: echo "::remove-matcher owner=gotest-fail::" && echo "::remove-matcher owner=gotest-pkgfail::" && echo "::remove-matcher owner=gotest-panic::"
+      - name: go test
+        run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee gotest.log
       - run: go build -trimpath -ldflags "-s -w" -o chatmux .
       - name: end-to-end smoke
         run: |
-          echo "::add-matcher::.github/matchers/smoke.json"
-          scripts/smoke.sh 18097
+          set -o pipefail
+          scripts/smoke.sh 18097 2>&1 | tee smoke.log
+      # ::error workflow commands create annotations directly (readable
+      # via the unauthenticated annotations API) — problem matchers were
+      # tried first and their file field must be a capture index, not a
+      # literal path; that mistake turned ci red on v0.6.53/v0.6.54.
+      - name: annotate failures
+        if: failure()
+        run: |
+          { grep -hE '^ *--- FAIL: |^FAIL\t|^panic: ' gotest.log 2>/dev/null || true
+            grep -hE '^FAIL: ' smoke.log 2>/dev/null || true
+          } | head -30 | while IFS= read -r l; do
+            echo "::error file=go.mod,line=1::${l}"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: chatmux-linux-amd64
