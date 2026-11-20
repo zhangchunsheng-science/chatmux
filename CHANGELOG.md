@@ -3,6 +3,16 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.39（对齐循环第 59 轮）
+
+模型 agent 密钥预警——openai/anthropic agent 既没配 apiKey、对应环境
+变量（OPENAI_API_KEY/ANTHROPIC_API_KEY）也没设时，每个 turn 运行时必
+401；chatmux check 现在预先警告（建议性不阻启，与 dataDir 探测同理：
+check 与服务可能不在同一 shell）。CLI agent 不受影响。实测渲染：
+"no apiKey and OPENAI_API_KEY not set — model calls would fail auth at
+runtime"。README 部署节补「配置体检」条目（check 子命令此前只活在轮
+次记录里）。
+
 ## v0.6.38（对齐循环第 58 轮）
 
 admin 路由鉴权守护——TestAdminRoutesRequireToken 从 main.go 源码提取

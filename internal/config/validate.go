@@ -80,6 +80,21 @@ func Validate(cfg *Config) (problems, warnings []string) {
 				add("agents[%d] %q: bad turnTimeout %q (e.g. \"45m\")", i, a.Name, a.TurnTimeout)
 			}
 		}
+		// model-key probe: an openai/anthropic agent with neither its
+		// own apiKey nor the provider env var will 401 on every turn at
+		// runtime. Advisory like the dataDir probe: check may run in a
+		// different shell than the service, so env here is a hint, not
+		// the truth.
+		if a.Cli == nil && a.APIKey == "" {
+			p := a.Provider
+			if p == "" {
+				p = "openai" // runtime default
+			}
+			env := map[string]string{"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}[p]
+			if env != "" && os.Getenv(env) == "" {
+				warn("agents[%d] %q: no apiKey and %s not set — model calls would fail auth at runtime", i, a.Name, env)
+			}
+		}
 		if a.Cli != nil {
 			if err := cliagent.CheckConfig(*a.Cli); err != nil {
 				add("agents[%d] %q: %v", i, a.Name, err)

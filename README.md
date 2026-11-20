@@ -344,6 +344,9 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   linux/darwin/windows × amd64/arm64 并挂到 GitHub Release
 - **冒烟**：`scripts/smoke.sh`——本地端到端（构建→check→起实例→成功轮
   +失败轮→记账核对→优雅停机），零凭据零外网
+- **配置体检**：`chatmux check chatmux.json`——启动前全量校验（未知通
+  道/路由、cron 表达式、CLI 配置、重复名）；dataDir 不可写、模型 agent
+  无 apiKey 且对应环境变量未设等运行期隐患预警但不阻启
 
 ## 各平台接入要点
 
@@ -371,6 +374,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.39（对齐循环第 59 轮）：chatmux check 密钥预警——模型 agent 无
+apiKey 且环境变量未设（运行时必 401）启动前警告；README 补「配置体检」
+条目。
+
 v0.6.38（对齐循环第 58 轮）：admin 路由鉴权守护——全部 /admin/* 路由
 无 token 一律 401 的守护测试；首跑抓到三个 handler 方法检查先于鉴权
 （405 泄漏路由语义），已修。
@@ -389,9 +396,5 @@ v0.6.35（对齐循环第 55 轮）：chatmux check 二次打磨——修 "web" 
 v0.6.34（对齐循环第 54 轮）：i18n 完整性——zh/en 键对齐 + say() 字面量
 全覆盖两个守护测试；当场抓到 /schedule 未知子命令回显裸键名的真 bug
 （补 zh/en 文案修复）。
-
-v0.6.33（第 53 轮补丁二）：发布流水线重构——矩阵只构建，单个 release
-job 统一算校验和、清旧产物、一次性上传（v0.6.32 把清空放进每个矩阵 job，
-并行互清只剩一对产物，实测暴露后重构）。
 
 MIT

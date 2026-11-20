@@ -4,14 +4,16 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
 )
 
 func TestValidateCleanConfig(t *testing.T) {
 	cfg := &Config{
 		Channels: []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{"appId":"a","appSecret":"s"}`)}},
 		Agents: []AgentConfig{
-			{Name: "helper", Provider: "openai", TurnTimeout: "45m"},
-			{Name: "coder", Provider: "anthropic", Routes: []Route{{Channel: "fs"}}},
+			{Name: "helper", Provider: "openai", APIKey: "k", TurnTimeout: "45m"},
+			{Name: "coder", Provider: "anthropic", APIKey: "k", Routes: []Route{{Channel: "fs"}}},
 		},
 		DefaultAgent: "helper",
 		HTTP:         HTTPConfig{Listen: ":8080"},
@@ -57,7 +59,7 @@ func TestValidateBrokenConfig(t *testing.T) {
 func TestValidateDocwatchPathIsWarning(t *testing.T) {
 	cfg := &Config{
 		Channels: []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{}`)}},
-		Agents:   []AgentConfig{{Name: "a"}},
+		Agents:   []AgentConfig{{Name: "a", APIKey: "k"}},
 		HTTP:     HTTPConfig{Listen: ":8080"},
 		DocWatch: []DocWatchConfig{{Name: "later", Path: "/nonexistent/plan.md", Channel: "fs", ChatID: "c1", Prompt: "p"}},
 	}
@@ -75,7 +77,7 @@ func TestValidateNoChannelsIsWarning(t *testing.T) {
 	// with zero IM channels is a valid gateway-only setup: warning, not
 	// a boot-blocking problem.
 	cfg := &Config{
-		Agents:       []AgentConfig{{Name: "a", Provider: "openai"}},
+		Agents:       []AgentConfig{{Name: "a", Provider: "openai", APIKey: "k"}},
 		DefaultAgent: "a",
 		HTTP:         HTTPConfig{Listen: ":8080"},
 	}
@@ -133,6 +135,65 @@ func TestValidateDataDirNotWritable(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no dataDir warning among %v", warnings)
+	}
+}
+
+func TestValidateAgentKeyProbe(t *testing.T) {
+	// a model agent with neither its own apiKey nor the provider env
+	// var will 401 on every turn at runtime — check warns up front.
+	// t.Setenv("") is "unset" for os.Getenv purposes and auto-restores.
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	hasKeyWarn := func(ws []string) bool {
+		for _, w := range ws {
+			if strings.Contains(w, "fail auth") {
+				return true
+			}
+		}
+		return false
+	}
+
+	cfg := &Config{
+		Agents:       []AgentConfig{{Name: "a"}}, // provider defaults to openai
+		DefaultAgent: "a",
+		HTTP:         HTTPConfig{Listen: ":8080"},
+		DataDir:      t.TempDir(),
+	}
+	if _, warnings := Validate(cfg); !hasKeyWarn(warnings) {
+		t.Fatalf("keyless openai agent not warned: %v", warnings)
+	}
+
+	cfg.Agents[0].Provider = "anthropic"
+	_, warnings := Validate(cfg)
+	if !hasKeyWarn(warnings) {
+		t.Fatalf("keyless anthropic agent not warned: %v", warnings)
+	}
+	namedEnv := false
+	for _, w := range warnings {
+		if strings.Contains(w, "ANTHROPIC_API_KEY") {
+			namedEnv = true
+		}
+	}
+	if !namedEnv {
+		t.Fatalf("anthropic agent should name ANTHROPIC_API_KEY: %v", warnings)
+	}
+
+	cfg.Agents[0].APIKey = "k" // own key suppresses the warning
+	if _, warnings := Validate(cfg); hasKeyWarn(warnings) {
+		t.Fatalf("agent apiKey set but still warned: %v", warnings)
+	}
+
+	t.Setenv("ANTHROPIC_API_KEY", "env-key") // env presence also suppresses
+	cfg.Agents[0].APIKey = ""
+	if _, warnings := Validate(cfg); hasKeyWarn(warnings) {
+		t.Fatalf("env key set but still warned: %v", warnings)
+	}
+
+	// CLI agents drive a local binary — no model key needed.
+	cfg.Agents[0] = AgentConfig{Name: "a", Cli: &cliagent.Config{Type: "generic", Bin: "/bin/echo"}}
+	if _, warnings := Validate(cfg); hasKeyWarn(warnings) {
+		t.Fatalf("CLI agent warned about model key: %v", warnings)
 	}
 }
 
