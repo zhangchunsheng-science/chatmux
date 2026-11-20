@@ -990,3 +990,73 @@ func TestBusyAndShutdownDrain(t *testing.T) {
 		t.Fatalf("Shutdown did not snapshot sessions: %v", err)
 	}
 }
+
+func TestTurnContextBudget(t *testing.T) {
+	near := func(c context.Context, want time.Duration, label string) {
+		t.Helper()
+		dl, ok := c.Deadline()
+		if !ok {
+			t.Fatalf("%s: no deadline set", label)
+		}
+		if d := time.Until(dl); d <= want-time.Minute || d >= want+time.Minute {
+			t.Fatalf("%s budget = %v, want ~%v", label, d, want)
+		}
+	}
+	near(mustCtx(turnContext(nil)), 30*time.Minute, "default")
+	near(mustCtx(turnContext(&config.AgentConfig{TurnTimeout: "45m"})), 45*time.Minute, "configured")
+	near(mustCtx(turnContext(&config.AgentConfig{TurnTimeout: "soon"})), 30*time.Minute, "bad-value")
+	near(mustCtx(bgContext(&config.AgentConfig{TurnTimeout: "45m"})), 3*time.Hour, "bg-4x")
+}
+
+func mustCtx(c context.Context, _ context.CancelFunc) context.Context { return c }
+
+// hangProvider blocks mid-stream and, when ctx dies, surfaces the
+// cancellation as a delta error — what a real transport does (HTTP read
+// error / killed CLI child), unlike blockingProvider's clean close.
+type hangProvider struct{}
+
+func (h *hangProvider) Name() string { return "openai" }
+func (h *hangProvider) Stream(ctx context.Context, _ provider.Request) (<-chan provider.Delta, error) {
+	ch := make(chan provider.Delta)
+	go func() {
+		<-ctx.Done()
+		ch <- provider.Delta{Err: ctx.Err()}
+		close(ch)
+	}()
+	return ch, nil
+}
+
+func TestTurnWatchdogUnblocksChat(t *testing.T) {
+	// a provider that never yields must not hold the chat hostage:
+	// the turn budget cancels it, the failure is accounted, and the
+	// chat accepts new turns again.
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "helper", Provider: "openai", TurnTimeout: "150ms"}},
+		DefaultAgent: "helper",
+		DataDir:      dir,
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&hangProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	rt.SetUsageLogger(usage.New(dir))
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "挂死"})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && rt.Busy() > 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if rt.Busy() != 0 {
+		t.Fatal("watchdog did not release the wedged turn")
+	}
+	// the cancelled turn is accounted as a failed call
+	for time.Now().Before(deadline) {
+		if aggs, err := usage.Summarize(dir); err == nil && len(aggs) == 1 && aggs[0].Errors == 1 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("watchdog-cancelled turn was not recorded in usage")
+}

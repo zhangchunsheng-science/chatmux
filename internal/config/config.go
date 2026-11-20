@@ -142,6 +142,10 @@ type AgentConfig struct {
 	// GroupMention: when false, answer every group message without
 	// requiring an @-mention. Default (nil/true): groups must @ the bot.
 	GroupMention *bool `json:"groupMention,omitempty"`
+	// TurnTimeout bounds one chat turn ("30m", "1h"); 0/invalid uses the
+	// default. A hung model call or CLI child otherwise blocks its chat
+	// forever. Background jobs get 4× this budget.
+	TurnTimeout string `json:"turnTimeout,omitempty"`
 }
 
 // Route binds chats to this agent.

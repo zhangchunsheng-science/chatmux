@@ -99,6 +99,7 @@
         "sandbox": { "mode": "docker", "image": "node:20-slim", "network": "none" }
       },
       "groupMention": true,
+      "turnTimeout": "45m",
       "routes": [
         { "channel": "feishu", "chatId": "oc_xxxx" }
       ]

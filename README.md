@@ -362,6 +362,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.18（对齐循环第 40 轮）：turn 看门狗——turn 上下文原来无期限，CLI
+子进程挂死会永远占住会话（API 路径仅靠 HTTP 超时兜底）。现在每 turn 有
+预算（agent 级 turnTimeout，默认 30m；后台任务 4×），超时取消并记日志；
+被打断的 turn（/stop、超时、停机）原来完全不记账，现在以 cancelled /
+turn budget exceeded 落 usage——"漏记账"家族最后一个洞。
+
 v0.6.17（对齐循环第 39 轮）：优雅关机收尾——SIGTERM 原来只停 HTTP 后直接
 退出：Runtime.Shutdown()/usage.Close() 从未被调用，进行中的 turn 被硬杀
 （记账与最后几条会话更新丢失）。现在停机时先等在飞 turn 落地（8s 上限），

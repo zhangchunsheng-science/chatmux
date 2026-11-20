@@ -115,6 +115,37 @@ func (r *Runtime) Busy() int {
 	return len(r.turns)
 }
 
+// defaultTurnTimeout bounds a chat turn when the agent config says
+// nothing: a hung model stream or CLI child must not block its chat
+// forever.
+const defaultTurnTimeout = 30 * time.Minute
+
+// turnBudget resolves the agent's TurnTimeout (fallback default).
+func turnBudget(a *config.AgentConfig) time.Duration {
+	d := defaultTurnTimeout
+	if a != nil && a.TurnTimeout != "" {
+		if parsed, err := time.ParseDuration(a.TurnTimeout); err == nil && parsed > 0 {
+			d = parsed
+		} else {
+			log.Printf("agent %s: bad turnTimeout %q, using default %s", a.Name, a.TurnTimeout, defaultTurnTimeout)
+		}
+	}
+	return d
+}
+
+// turnContext builds the per-turn context: cancellable, plus a deadline
+// from the agent's TurnTimeout (fallback: defaultTurnTimeout).
+func turnContext(a *config.AgentConfig) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), turnBudget(a))
+}
+
+// bgContext bounds a background job at 4× the turn budget: jobs are
+// expected to run longer than chats, but not hang forever holding a
+// subprocess.
+func bgContext(a *config.AgentConfig) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 4*turnBudget(a))
+}
+
 // SetSkills installs skill prompts (name → markdown body).
 func (r *Runtime) SetSkills(m map[string]string) { r.skills = m }
 
@@ -214,13 +245,16 @@ func (r *Runtime) launchTurn(key session.Key, msg channel.Message, agentCfg *con
 		r.Handle(context.Background(), msg)
 		return
 	}
-	tctx, cancel := context.WithCancel(context.Background())
+	tctx, cancel := turnContext(agentCfg)
 	t := &turn{cancel: cancel, done: make(chan struct{}), agent: agentCfg, sender: sender, started: time.Now()}
 	r.turns[key] = t
 	r.mu.Unlock()
 
 	go func() {
 		r.executeTurn(tctx, key, t, msg, "")
+		if tctx.Err() == context.DeadlineExceeded {
+			log.Printf("turn watchdog: %s/%s agent=%s hit turn budget — cancelled", key.Channel, key.ChatID, agentCfg.Name)
+		}
 		queued := t.queued
 		t.queued = nil
 		// only remove the turn after runTurn finished, so a follow-up
@@ -756,7 +790,19 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	var inTok, outTok int
 	for d := range stream {
 		if d.Err != nil {
-			if ctx.Err() != nil { // cancelled via /stop
+			if ctx.Err() != nil { // cancelled: /stop, turn budget, shutdown
+				// interrupted calls are usage too — they consumed time
+				// and tokens; /insight must not undercount them
+				cause := "cancelled"
+				if ctx.Err() == context.DeadlineExceeded {
+					cause = "turn budget exceeded"
+				}
+				r.usage.Log(usage.Record{
+					Agent: t.agent.Name, Mode: "api", Provider: providerName(t.agent), Model: model,
+					Channel: msg.Channel, ChatID: msg.ChatID, OutputChars: len(sb.String()),
+					DurationMs: time.Since(start).Milliseconds(), Error: cause,
+				})
+				logTurn(t.agent, model, msg, start, inTok, outTok, len(sb.String()), cause)
 				r.reportInterrupt(ctx, t, msg, placeholderID, sb.String())
 				return
 			}
@@ -999,7 +1045,18 @@ func (r *Runtime) runCliTurn(ctx context.Context, key session.Key, t *turn, msg 
 		}
 	}
 
-	if ctx.Err() != nil { // /stop
+	if ctx.Err() != nil { // cancelled: /stop, turn budget, shutdown
+		cause := "cancelled"
+		if ctx.Err() == context.DeadlineExceeded {
+			cause = "turn budget exceeded"
+		}
+		r.usage.Log(usage.Record{
+			Agent: t.agent.Name, Mode: "cli:" + cfg.Type, Model: cfg.Model,
+			Channel: msg.Channel, ChatID: msg.ChatID,
+			OutputChars: len(render()), DurationMs: time.Since(start).Milliseconds(),
+			Error: cause,
+		})
+		logTurn(t.agent, cfg.Model, msg, start, 0, 0, len(render()), cause)
 		r.reportInterrupt(ctx, t, msg, placeholderID, render())
 		return
 	}
@@ -1179,7 +1236,7 @@ func (r *Runtime) startBgJob(key session.Key, msg channel.Message, a *config.Age
 	r.mu.Lock()
 	r.jobSeq++
 	id := fmt.Sprintf("bg-%d", r.jobSeq)
-	jctx, cancel := context.WithCancel(context.Background())
+	jctx, cancel := bgContext(a)
 	job := &bgJob{id: id, desc: task, agent: a, cancel: cancel, started: time.Now(), flow: flowName}
 	r.jobs[id] = job
 	r.mu.Unlock()
