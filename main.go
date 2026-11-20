@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -675,11 +676,22 @@ func runServer(cfgPath string) int {
 		go superviseChannel(ctx, c, inbound, minChannelBackoff, maxChannelBackoff)
 	}
 
-	srv := &http.Server{Addr: cfg.HTTP.Listen, Handler: &mux}
+	srv := &http.Server{Handler: &mux}
+	// bind synchronously: a taken port is a startup error like any
+	// other, reported through the return code — never log.Fatalf,
+	// which would kill the process (and, under test, the whole test
+	// binary — the source of two mystery CI exits)
+	ln, err := net.Listen("tcp", cfg.HTTP.Listen)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "http server:", err)
+		return 1
+	}
+	var serveErr error
 	go func() {
 		log.Printf("http listening on %s", cfg.HTTP.Listen)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server: %v", err)
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			serveErr = err // visible to the main loop via stop()'s cancel
+			stop()
 		}
 	}()
 
@@ -695,6 +707,10 @@ func runServer(cfgPath string) int {
 	}
 	rt.Shutdown()
 	ul.Close()
+	if serveErr != nil {
+		fmt.Fprintln(os.Stderr, "http server:", serveErr)
+		return 1
+	}
 	return 0
 }
 

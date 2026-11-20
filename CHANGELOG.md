@@ -3,6 +3,17 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.47（对齐循环第 67 轮）
+
+CI flake 根因修复——runServer 的 http bind 失败走 log.Fatalf，会直接杀
+进程。测试用临时端口 grab-and-release 后起真实 server，端口在窗口内被
+系统重新分配时 bind 失败 → Fatalf 杀掉整个测试二进制：exit 1、没有任何
+--- FAIL 注解——与 v0.6.31、v0.6.46 两轮的 CI flake 签名完全吻合。修复：
+listener 同步先行绑定（占用端口变成普通启动错误），Serve 循环出错经
+stop() 触发正常优雅停机后返回退出码 1；CLI 行为不变（同样退出 1），嵌
+入方与测试进程不再陪葬。回归测试：占住端口调 runServer 断言返回 1 而
+非杀进程。
+
 ## v0.6.46（对齐循环第 66 轮）
 
 chatmux init 首跑体验——`chatmux init [path]` 生成零凭据起点配置：echo

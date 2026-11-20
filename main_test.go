@@ -363,3 +363,34 @@ func TestWriteInitConfig(t *testing.T) {
 		t.Fatalf("init config must be owner-only, got %v", info.Mode())
 	}
 }
+
+// A bind failure must be a clean exit code, not log.Fatalf: the test
+// binary (and any embedder) survives. This was the root cause of two
+// mystery CI failures — the ephemeral port a test just released got
+// re-grabbed before runServer could bind it, and Fatalf killed the
+// whole test process with no --- FAIL annotation.
+func TestRunServerBindFailureReturns(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot bind: %v", err)
+	}
+	defer ln.Close()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "cm.json")
+	cfg := `{"defaultAgent":"a","dataDir":` + strconv.Quote(filepath.ToSlash(dir)) + `,
+	  "http":{"listen":"` + ln.Addr().String() + `","adminToken":"t"},
+	  "agents":[{"name":"a","cli":{"type":"generic","bin":"/bin/echo"}}]}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := make(chan int, 1)
+	go func() { code <- runServer(cfgPath) }()
+	select {
+	case c := <-code:
+		if c != 1 {
+			t.Fatalf("runServer on taken port = %d, want 1", c)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runServer did not return on bind failure — would it Fatalf?")
+	}
+}
