@@ -181,6 +181,9 @@ type CronConfig struct {
 func Load(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("read config: %w\n  没有配置？`chatmux init` 可生成零凭据起点配置", err)
+		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	cfg := &Config{}

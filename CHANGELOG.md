@@ -3,6 +3,16 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.46（对齐循环第 66 轮）
+
+chatmux init 首跑体验——`chatmux init [path]` 生成零凭据起点配置：echo
+agent（unix /bin/echo、windows more.com 回显——绝不用 cmd.exe 免得把聊天
+文本当命令执行）+ 随机 24+ 位 adminToken + 127.0.0.1:18097 控制台，打印
+下一步指引；拒绝覆盖已有文件；权限 0600。缺配置报错加 "chatmux init 可
+生成起点配置" 指引。实测首跑旅程全通：init → 启动 → 控制台发话 → echo
+回 → healthz ok。README 快速开始改为 init 三行上手。附带看板 XSS 审计：
+表格全 esc()、聊天面板 textContent，全干净。
+
 ## v0.6.45（对齐循环第 65 轮）
 
 check 启动前最后一公里——(a) 监听端口占用预警：bind 失败（双实例最常

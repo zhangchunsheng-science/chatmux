@@ -44,9 +44,11 @@ Discord(Gateway) ─┘                                  │    (无头 CLI 代�
 
 ```bash
 go build -o chatmux .
-cp chatmux.json.example chatmux.json   # 填入你的通道凭据和模型 key
-./chatmux -config chatmux.json
+chatmux init                            # 生成零凭据起点配置（echo agent + 随机 token）
+./chatmux -config chatmux.json          # 看板 127.0.0.1:18097，先在网页会话验证链路
 ```
+
+有凭据后照 `chatmux.json.example` 填通道与模型 key。
 
 模型 key 也可以走环境变量：`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`（配置文件里的 `apiKey`/`baseUrl` 优先，可按 agent 覆盖——任何 OpenAI 兼容网关都能接）。
 
@@ -380,6 +382,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.46（对齐循环第 66 轮）：chatmux init——零凭据起点配置（echo
+agent+随机 token+控制台地址）三行上手；缺配置报错带指引；首跑旅程
+init→启动→问答→healthz 实测全通。
+
 v0.6.45（对齐循环第 65 轮）：check 最后一公里——监听端口占用预警
 （双实例死法启动前点名）+ 未知 provider/通道类型拼写建议（建议器提炼
 config.Suggest 共用）。
@@ -398,9 +404,5 @@ v0.6.42（对齐循环第 62 轮）：panic 隔离——通道适配器 panic �
 
 v0.6.41（对齐循环第 61 轮）：自更新绝不降级——版本按数值段比较
 （0.6.10 > 0.6.9），latest 比当前旧视为已是最新，二进制分毫不动。
-
-v0.6.40（对齐循环第 60 轮）：配置键名拼写守护——check 按路径点名被
-JSON 解码器静默丢弃的拼写错误键（apikey/lisen 类）并给近似建议；期望
-键集反射自真实 struct，不会漂移。
 
 MIT

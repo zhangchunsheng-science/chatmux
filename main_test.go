@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
+	"github.com/zhangchunsheng-science/chatmux/internal/config"
 )
 
 func TestLoadSkills(t *testing.T) {
@@ -329,5 +330,36 @@ func TestHealthzBody(t *testing.T) {
 	code, body := healthzBody(all)
 	if code != 503 || body != "degraded: slack, tg1" {
 		t.Fatalf("degraded body = %d %q, want 503 %q (sorted, named)", code, body, "degraded: slack, tg1")
+	}
+}
+
+// The init starter must be immediately bootable: valid JSON, zero
+// check problems, a real token, and safe to refuse overwriting.
+func TestWriteInitConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chatmux.json")
+	token, err := writeInitConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(token) < 24 {
+		t.Fatalf("token too short: %q", token)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("init config does not load: %v", err)
+	}
+	if cfg.HTTP.AdminToken != token || cfg.DefaultAgent != "echo" || len(cfg.Agents) != 1 {
+		t.Fatalf("init config fields wrong: %+v", cfg.HTTP)
+	}
+	if _, err := writeInitConfig(path); err == nil {
+		t.Fatal("second init must refuse to overwrite")
+	}
+	if p, _ := config.Validate(cfg); len(p) != 0 {
+		t.Fatalf("init config has check problems: %v", p)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("init config must be owner-only, got %v", info.Mode())
 	}
 }

@@ -12,6 +12,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -89,6 +91,24 @@ func runClient(args []string, cfgPath string) int {
 	switch cmd {
 	case "version":
 		fmt.Printf("chatmux v%s (%s/%s)\n", version.Version, runtime.GOOS, runtime.GOARCH)
+		return 0
+	case "init":
+		path := cfgPath
+		if len(args) > 1 {
+			path = args[1]
+		}
+		token, err := writeInitConfig(path)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Printf("已生成 %s\n\n", path)
+		fmt.Printf("  chatmux -config %s        # 启动（Ctrl-C 停止）\n", path)
+		fmt.Printf("  看板  http://127.0.0.1:18097  token: %s\n", token)
+		fmt.Println()
+		fmt.Println("起点配置零凭据即可跑通：echo agent 会原样回复，先在网页会话里说句话验证链路，")
+		fmt.Println("再把 agents[0] 换成真实模型（provider openai/anthropic + apiKey）。")
+		fmt.Println("改完跑 chatmux check 复查。")
 		return 0
 	case "check":
 		// `chatmux check [path]` — default path from -config
@@ -676,6 +696,40 @@ func runServer(cfgPath string) int {
 	rt.Shutdown()
 	ul.Close()
 	return 0
+}
+
+// writeInitConfig lays down a zero-credential starter config: a
+// generic echo agent proves the whole pipeline (console → runtime →
+// reply → usage) before any credentials exist. Returns the generated
+// admin token so the caller can point the user at the dashboard.
+func writeInitConfig(path string) (string, error) {
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("%s already exists — refusing to overwrite", path)
+	}
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(buf)
+	// unix: /bin/echo; windows: more.com echoes stdin the same way
+	// (cmd.exe would treat chat text as commands — never that)
+	echoBin := "/bin/echo"
+	if runtime.GOOS == "windows" {
+		echoBin = "more"
+	}
+	cfg := `{
+  "defaultAgent": "echo",
+  "dataDir": "data",
+  "http": { "listen": "127.0.0.1:18097", "adminToken": "` + token + `" },
+  "agents": [
+    { "name": "echo", "cli": { "type": "generic", "bin": "` + echoBin + `" } }
+  ]
+}
+`
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 // healthzBody renders the liveness probe: 200 "ok" when every channel
