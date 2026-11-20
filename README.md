@@ -345,8 +345,9 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - **冒烟**：`scripts/smoke.sh`——本地端到端（构建→check→起实例→成功轮
   +失败轮→记账核对→优雅停机），零凭据零外网
 - **配置体检**：`chatmux check chatmux.json`——启动前全量校验（未知通
-  道/路由、cron 表达式、CLI 配置、重复名）；dataDir 不可写、模型 agent
-  无 apiKey 且对应环境变量未设等运行期隐患预警但不阻启
+  道/路由、cron 表达式、CLI 配置、重复名）；拼写错的键名（`apikey`/`lisen`
+  这类被 JSON 解码器静默丢弃的）按路径点名并给近似建议；dataDir 不可写、
+  模型 agent 无 apiKey 且对应环境变量未设等运行期隐患预警但不阻启
 
 ## 各平台接入要点
 
@@ -374,6 +375,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.40（对齐循环第 60 轮）：配置键名拼写守护——check 按路径点名被
+JSON 解码器静默丢弃的拼写错误键（apikey/lisen 类）并给近似建议；期望
+键集反射自真实 struct，不会漂移。
+
 v0.6.39（对齐循环第 59 轮）：chatmux check 密钥预警——模型 agent 无
 apiKey 且环境变量未设（运行时必 401）启动前警告；README 补「配置体检」
 条目。
@@ -392,9 +397,5 @@ v0.6.36（对齐循环第 56 轮）：会话存储字节封顶——单条消息
 v0.6.35（对齐循环第 55 轮）：chatmux check 二次打磨——修 "web" 通道被
 冤报未知通道路由的误报；补 dataDir 可写探测（不可写时 usage 记账静默丢
 失，check 预先警告）。
-
-v0.6.34（对齐循环第 54 轮）：i18n 完整性——zh/en 键对齐 + say() 字面量
-全覆盖两个守护测试；当场抓到 /schedule 未知子命令回显裸键名的真 bug
-（补 zh/en 文案修复）。
 
 MIT

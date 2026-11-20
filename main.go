@@ -423,6 +423,11 @@ func runCheck(cfgPath string) int {
 		return 1
 	}
 	problems, warnings := config.Validate(cfg)
+	// keys the decoder silently drops (typos) come first: they are the
+	// most actionable findings when a feature mysteriously does nothing
+	if raw, rerr := os.ReadFile(cfgPath); rerr == nil {
+		warnings = append(config.UnknownKeyWarnings(raw), warnings...)
+	}
 	for i, cc := range cfg.Channels {
 		f, ok := channelFactories[cc.Type]
 		if !ok {

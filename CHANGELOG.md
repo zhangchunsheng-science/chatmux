@@ -3,6 +3,15 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.40（对齐循环第 60 轮）
+
+配置键名拼写守护——Go 的 encoding/json 静默丢弃未知键：`apikey` 拼错
+apiKey、`lisen` 拼错 listen，功能静默失效且启动无任何报错。chatmux check
+现在按 JSON 路径点名未知键并给近似建议（大小写不敏感命中明确提示 JSON
+键名区分大小写；编辑距离 ≤2 给 "did you mean"；通道 options 是适配器私有
+schema、跳过）。期望键集由反射从真实 Config struct 提取——schema 不可能
+与解码器漂移。实测：agnts/lisen/apikey/workdir 四个拼写错误一次全抓。
+
 ## v0.6.39（对齐循环第 59 轮）
 
 模型 agent 密钥预警——openai/anthropic agent 既没配 apiKey、对应环境
