@@ -314,3 +314,24 @@ func TestValidateOpenAdminWarns(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateAttachmentRetention(t *testing.T) {
+	base := func(ret string) *Config {
+		return &Config{
+			AttachmentRetention: ret,
+			Agents:              []AgentConfig{{Name: "a", Provider: "openai", APIKey: "k"}},
+			HTTP:                HTTPConfig{Listen: testListen(t)},
+		}
+	}
+	if p, _ := Validate(base("junk")); len(p) == 0 {
+		t.Error("bad attachmentRetention must be a problem")
+	}
+	if p, _ := Validate(base("-1h")); len(p) == 0 {
+		t.Error("negative attachmentRetention must be a problem")
+	}
+	for _, ok := range []string{"72h", "0", "0s", ""} {
+		if p, _ := Validate(base(ok)); len(p) != 0 {
+			t.Errorf("attachmentRetention %q flagged: %v", ok, p)
+		}
+	}
+}

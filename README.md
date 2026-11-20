@@ -382,8 +382,16 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   downloadCode 走 messageFiles/download（需配 robotCode）、Discord 直接
   用公开 CDN URL，落到 `dataDir/attachments/` 后以本地文件喂给视觉模型。
   企微/钉钉语音同样取回后送转写
+- 附件保留期：`attachmentRetention`（默认 `"72h"`，`"0"` 关闭）——启动即
+  清扫 + 每小时一轮，`dataDir/attachments/` 按内容哈希存盘、按需重取，
+  过期删除只花一次重新下载，不会弄坏进行中的会话
 
 ## 状态
+
+v0.6.51（对齐循环第 71 轮）：附件保留期——`dataDir/attachments/` 原来
+只进不出（图片/语音按内容哈希落盘、全仓库无一处删除），补 `attachmentRetention`
+（默认 72h，"0" 关闭）：启动即清扫 + 每小时一轮，过期删除；文件按需重取，
+只花一次重新下载。至此会话/usage/去重/cli-sessions/附件五类磁盘增长全部封顶。
 
 v0.6.50（对齐循环第 70 轮）：check 新增 admin 面预警——adminToken 为空
 且监听非回环地址时点名 `/admin/*`（chat/stop/send）将对所有能访问端口
@@ -405,9 +413,5 @@ log.Fatalf 杀整进程（临时端口被抢时测试二进制陪葬、无 FAIL 
 v0.6.46（对齐循环第 66 轮）：chatmux init——零凭据起点配置（echo
 agent+随机 token+控制台地址）三行上手；缺配置报错带指引；首跑旅程
 init→启动→问答→healthz 实测全通。
-
-v0.6.45（对齐循环第 65 轮）：check 最后一公里——监听端口占用预警
-（双实例死法启动前点名）+ 未知 provider/通道类型拼写建议（建议器提炼
-config.Suggest 共用）。
 
 MIT

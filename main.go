@@ -641,6 +641,9 @@ func runServer(cfgPath string) int {
 		}
 	}
 
+	// ---- attachment retention sweep (dataDir/attachments) ----
+	rt.StartAttachmentSweeper(ctx)
+
 	// ---- doc watchers ----
 	if len(cfg.DocWatch) > 0 {
 		byName := map[string]config.DocWatchConfig{}

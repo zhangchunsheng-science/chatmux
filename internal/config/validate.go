@@ -74,6 +74,12 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		ln.Close()
 	}
 
+	if cfg.AttachmentRetention != "" {
+		if d, err := time.ParseDuration(cfg.AttachmentRetention); err != nil || d < 0 {
+			add("attachmentRetention: bad duration %q (e.g. \"72h\", \"0\" disables the sweep)", cfg.AttachmentRetention)
+		}
+	}
+
 	// admin-token probe: with an empty adminToken the guard on every
 	// /admin/* route passes everyone through — /admin/chat drives the
 	// agents (spending their API keys), /admin/stop kills the process,

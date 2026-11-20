@@ -21,6 +21,12 @@ type Config struct {
 	HTTP HTTPConfig `json:"http"`
 	// DataDir stores session history and state.
 	DataDir string `json:"dataDir"`
+	// AttachmentRetention bounds how long downloaded attachments
+	// (images, voice) stay on disk under dataDir/attachments ("72h").
+	// "0" disables the sweep; empty uses the default. Files are
+	// content-addressed and re-fetched on demand, so sweeping only
+	// costs a re-download, never a broken turn.
+	AttachmentRetention string `json:"attachmentRetention,omitempty"`
 	// Cron schedules fire synthetic messages at agents.
 	Cron []CronConfig `json:"cron"`
 	// Transcribe turns voice messages into text (OpenAI-compatible
@@ -203,6 +209,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.DataDir == "" {
 		c.DataDir = "data"
+	}
+	if c.AttachmentRetention == "" {
+		c.AttachmentRetention = "72h"
 	}
 	for i := range c.Channels {
 		if c.Channels[i].Name == "" {
