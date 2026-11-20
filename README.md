@@ -362,6 +362,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.12（对齐循环第 33 轮）：看板用量表补"均耗时"列（⏱ 三档格式，与
+/insight 对齐）——平均时延至此三个表面齐全：usage.jsonl（原始）→
+/insight（文本）→ 看板（表格）。smoke 实测 avgMs 聚合与列渲染正确。
+
 v0.6.11（对齐循环第 32 轮）：/insight 平均时延——每条 usage 记录早已存
 DurationMs 但从未展示；Agg 增加 avgMs（均值），/insight 行追加 ⏱340ms/
 ⏱1.5s/⏱2m5s 三档格式。顺带排查确认会话持久化每轮落盘（finish →

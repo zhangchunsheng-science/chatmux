@@ -1202,10 +1202,11 @@ async function refresh(){
   } catch(e){ $("channels").innerHTML = "<tr><td class='bad'>"+esc(e.message)+"（检查 token）</td></tr>"; }
   try {
     const us = await get("/admin/usage");
-    let u = "<tr><th>Agent</th><th>调用</th><th>失败</th><th>入tokens</th><th>出tokens</th><th>👍</th><th>👎</th></tr>";
-    (us||[]).forEach(a=>{ u += "<tr><td>"+esc(a.agent)+"</td><td>"+a.calls+"</td><td>"+(a.errors||0)+"</td><td>"+a.inputTokens+"</td><td>"+a.outputTokens+"</td><td>"+a.feedbackUp+"</td><td>"+a.feedbackDown+"</td></tr>"; });
-    $("usage").innerHTML = (us||[]).length ? u : "<tr><td colspan='7' class='muted'>暂无数据</td></tr>";
-  } catch(e){ $("usage").innerHTML = "<tr><td colspan='7' class='muted'>"+esc(e.message)+"</td></tr>"; }
+    let u = "<tr><th>Agent</th><th>调用</th><th>失败</th><th>均耗时</th><th>入tokens</th><th>出tokens</th><th>👍</th><th>👎</th></tr>";
+    const dur = ms => ms<1000 ? ms+"ms" : ms<60000 ? (ms/1000).toFixed(1)+"s" : Math.floor(ms/60000)+"m"+Math.floor(ms%60000/1000)+"s";
+    (us||[]).forEach(a=>{ u += "<tr><td>"+esc(a.agent)+"</td><td>"+a.calls+"</td><td>"+(a.errors||0)+"</td><td class='muted'>"+(a.avgMs ? "⏱"+dur(a.avgMs) : "—")+"</td><td>"+a.inputTokens+"</td><td>"+a.outputTokens+"</td><td>"+a.feedbackUp+"</td><td>"+a.feedbackDown+"</td></tr>"; });
+    $("usage").innerHTML = (us||[]).length ? u : "<tr><td colspan='8' class='muted'>暂无数据</td></tr>";
+  } catch(e){ $("usage").innerHTML = "<tr><td colspan='8' class='muted'>"+esc(e.message)+"</td></tr>"; }
   $("ts").textContent = "更新于 " + new Date().toLocaleTimeString();
 }
 refresh();
