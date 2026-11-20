@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,6 +167,18 @@ func apply(ctx context.Context, fetch fetcher, metaURL, goos, goarch, current, e
 	if err != nil {
 		return res, err
 	}
+	// Verify against the release's "<archive>.sha256" sidecar when it
+	// exists (releases before checksum publishing skip this — the
+	// check is best-effort, never a downgrade blocker).
+	if cs, ok := findChecksumAsset(rel.Assets, asset.Name); ok {
+		sidecar, err := fetch(ctx, cs.URL)
+		if err != nil {
+			return res, err
+		}
+		if err := verifyChecksumSidecar(sidecar, archive); err != nil {
+			return res, fmt.Errorf("refusing bad download: %w", err)
+		}
+	}
 	bin, err := ExtractBinary(archive, asset.Name)
 	if err != nil {
 		return res, err
@@ -173,6 +187,31 @@ func apply(ctx context.Context, fetch fetcher, metaURL, goos, goarch, current, e
 		return res, err
 	}
 	return res, nil
+}
+
+// findChecksumAsset returns the "<archive>.sha256" sidecar asset.
+func findChecksumAsset(assets []Asset, archive string) (Asset, bool) {
+	for _, a := range assets {
+		if a.Name == archive+".sha256" && a.URL != "" {
+			return a, true
+		}
+	}
+	return Asset{}, false
+}
+
+// verifyChecksumSidecar compares the downloaded archive against the
+// sha256sum-format sidecar ("<hex>  <filename>"). Only the hex digest
+// is inspected (the filename also appears and may differ in path).
+func verifyChecksumSidecar(sidecar, body []byte) error {
+	fields := strings.Fields(string(sidecar))
+	if len(fields) == 0 {
+		return errors.New("empty checksum sidecar")
+	}
+	want := sha256.Sum256(body)
+	if got := strings.ToLower(fields[0]); got != hex.EncodeToString(want[:]) {
+		return fmt.Errorf("checksum mismatch: sidecar %s, archive %s", got, hex.EncodeToString(want[:]))
+	}
+	return nil
 }
 
 // swapBinary replaces exe with bin via a temp file + rename (atomic on

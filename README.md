@@ -115,6 +115,10 @@ chatmux version   # v0.4.5 (darwin/arm64)
 chatmux update    # 拉 GitHub latest release 并原子替换自身
 ```
 
+下载校验：release 为每个产物附 `<产物>.sha256` 边车文件，update 拉回后
+先比对 SHA256 再替换（不匹配直接拒装）；边车是后来才有的，旧 release
+没有则跳过校验照常升级。
+
 ## fleet 多实例管理
 
 一台机器管多个 chatmux 网关（`~/.chatmux/fleet.json` 或 `-fleet 路径`，
@@ -367,6 +371,9 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.31（对齐循环第 53 轮）：自更新下载校验——release 每产物附 .sha256
+边车，update 先比对再替换，不匹配拒装；旧 release 无边车跳过校验。
+
 v0.6.30（对齐循环第 52 轮）：韧性事件上指标——看门狗触发数
 （chatmux_turn_watchdog_fires_total）与流启动重试数
 （chatmux_stream_retries_total）进 /metrics，此前只有 daemon 日志可
@@ -393,12 +400,6 @@ v0.6.26（对齐循环第 48 轮）：模型流启动失败自动重试一次—
 重试完全无感。2 秒退避可被取消打断（/stop、看门狗、停机都生效），三处
 调用点（会话 turn、工作流/动态派发、编排）统一走 streamWithRetry。中
 途出错（已产出内容）不重试，避免重复输出。
-
-v0.6.25（对齐循环第 47 轮）：`chatmux check`——配置校验子命令：agents/
-routes/cron/workflows/docwatch/i18n/http 语义检查 + 各通道真实构造（凭据
-形状、AES key 长度等启动时才爆的错提前暴露），docwatch 路径未就绪为警告。
-顺手修了 example 两处自查发现：wecom 占位 AES key 长度非法、docwatch 示
-例路径说明。example 现在 check 全绿。
 更早轮次（v0.1 → v0.6.22，对齐循环第 1–44 轮）见
 [CHANGELOG.md](CHANGELOG.md)。
 

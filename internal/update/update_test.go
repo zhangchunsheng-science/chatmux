@@ -6,12 +6,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +121,101 @@ func TestApplySwapsTempExe(t *testing.T) {
 	}
 	if _, err := os.Stat(exe + ".new"); !os.IsNotExist(err) {
 		t.Fatal("temp .new file left behind")
+	}
+}
+
+// applyServer serves a fake release: meta at /meta, archive at /dl,
+// optional sidecar at /dl.sha256.
+func applyServer(t *testing.T, tag string, archive []byte, sidecar *string) *httptest.Server {
+	t.Helper()
+	assetName := "chatmux-" + runtime.GOOS + "-" + runtime.GOARCH + ".tar.gz"
+	var assets []Asset
+	if sidecar != nil {
+		assets = append(assets,
+			Asset{Name: assetName + ".sha256", URL: "sidecar"}, // rewritten to absolute in handler
+		)
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/meta":
+			base := "http://" + r.Host
+			as := append([]Asset{{Name: assetName, URL: base + "/dl"}}, assets...)
+			for i := range as {
+				if as[i].URL == "sidecar" {
+					as[i].URL = base + "/dl.sha256"
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": tag, "assets": as})
+		case "/dl":
+			w.Write(archive)
+		case "/dl.sha256":
+			if sidecar == nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Write([]byte(*sidecar))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func httpFetcher(ctx context.Context, url string) ([]byte, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	buf.ReadFrom(resp.Body)
+	return buf.Bytes(), nil
+}
+
+func TestApplyChecksumMatch(t *testing.T) {
+	archive := tarGz(t, "chatmux-bin", "VERIFIED")
+	sum := sha256.Sum256(archive)
+	sidecar := fmt.Sprintf("%x  chatmux.tar.gz\n", sum)
+	ts := applyServer(t, "v9.9.9", archive, &sidecar)
+	defer ts.Close()
+
+	exe := filepath.Join(t.TempDir(), "fake-chatmux")
+	os.WriteFile(exe, []byte("OLD"), 0o755)
+	if _, err := apply(context.Background(), httpFetcher, ts.URL+"/meta", runtime.GOOS, runtime.GOARCH, "0.0.1", exe); err != nil {
+		t.Fatalf("valid checksum rejected: %v", err)
+	}
+	got, _ := os.ReadFile(exe)
+	if string(got) != "VERIFIED" {
+		t.Fatalf("exe %q", got)
+	}
+}
+
+func TestApplyChecksumMismatchRefuses(t *testing.T) {
+	archive := tarGz(t, "chatmux-bin", "TAMPERED")
+	sidecar := "0000000000000000000000000000000000000000000000000000000000000000  chatmux.tar.gz\n"
+	ts := applyServer(t, "v9.9.9", archive, &sidecar)
+	defer ts.Close()
+
+	exe := filepath.Join(t.TempDir(), "fake-chatmux")
+	os.WriteFile(exe, []byte("OLD"), 0o755)
+	_, err := apply(context.Background(), httpFetcher, ts.URL+"/meta", runtime.GOOS, runtime.GOARCH, "0.0.1", exe)
+	if err == nil || !strings.Contains(err.Error(), "refusing bad download") {
+		t.Fatalf("mismatched checksum must refuse, got %v", err)
+	}
+	got, _ := os.ReadFile(exe)
+	if string(got) != "OLD" {
+		t.Fatalf("exe was replaced despite mismatch: %q", got)
+	}
+}
+
+func TestApplyNoSidecarSkipsCheck(t *testing.T) {
+	// releases before checksum publishing have no sidecar: update works
+	archive := tarGz(t, "chatmux-bin", "LEGACY")
+	ts := applyServer(t, "v9.9.9", archive, nil)
+	defer ts.Close()
+
+	exe := filepath.Join(t.TempDir(), "fake-chatmux")
+	os.WriteFile(exe, []byte("OLD"), 0o755)
+	if _, err := apply(context.Background(), httpFetcher, ts.URL+"/meta", runtime.GOOS, runtime.GOARCH, "0.0.1", exe); err != nil {
+		t.Fatalf("legacy release without sidecar must still update: %v", err)
 	}
 }

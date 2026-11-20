@@ -37,8 +37,10 @@ jobs:
           [ "${{ matrix.goos }}" = windows ] && ext=".exe"
           if [ "${{ matrix.goos }}" = windows ]; then
             zip "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
+            sha256sum "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.zip" > "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.zip.sha256"
           else
             tar czf "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
+            sha256sum "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" > "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256"
           fi
       - uses: softprops/action-gh-release@v2
         with:
