@@ -32,7 +32,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() {
+  echo "FAIL: $*" >&2
+  # full daemon log on any failure: the step log is where the evidence
+  # lives, and a partial tail has already cost us one blind flake hunt
+  if [ -f "$WORK/daemon.log" ]; then
+    echo "== full daemon.log ($WORK) ==" >&2
+    cat "$WORK/daemon.log" >&2
+  fi
+  exit 1
+}
 note() { echo "== $*"; }
 
 # ---- build + config ----
@@ -62,7 +71,7 @@ PID=$!
 
 for _ in $(seq 1 50); do
   curl -sf "$BASE/healthz" > /dev/null 2>&1 && break
-  kill -0 "$PID" 2>/dev/null || { tail -5 "$WORK/daemon.log"; fail "daemon exited during boot"; }
+  kill -0 "$PID" 2>/dev/null || fail "daemon exited during boot"
   sleep 0.2
 done
 curl -sf "$BASE/healthz" > /dev/null || fail "healthz never came up"
@@ -80,7 +89,6 @@ send_and_wait() { # $1=text  $2=want substring  $3=deadline seconds
     fi
     sleep 0.2
   done
-  tail -10 "$WORK/daemon.log" >&2
   fail "chat log never contained: $2"
 }
 

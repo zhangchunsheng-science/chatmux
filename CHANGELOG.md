@@ -3,6 +3,20 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.53（对齐循环第 73 轮）
+
+CI 失败可读化（flake 猎捕基础设施）。三次 CI flake（v0.6.31/46/52 轮）同
+签名：build-test exit 1、零 --- FAIL 注解——因为 GitHub 的日志 API 匿名
+403，能读的只有 check-runs 注解，而 go test/smoke 的失败输出从不进注解。
+本轮把盲区变信号：ci.yml 挂 problem matcher（gotest.json 捕获
+`--- FAIL:`、`FAIL\t包名`、`panic:`；smoke.json 捕获 smoke 的 `FAIL:`），
+注解经 annotations API 匿名可读，file 字段锚在仓库真实文件（go.mod/
+smoke.sh）只为定位合法、message 才是载荷；matcher 用完即 remove 防跨步
+误报。smoke.sh 的 fail() 改为全量 dump daemon.log 进步骤日志（原 tail -5
+已经让一次排查只能盲猜），冗余 tail 清理。顺带全仓库复查 log.Fatal/os.Exit：
+非 main 包零残余（库路径无被杀路径）。本地验证：JSON 合法、bash -n、
+smoke 全过；matcher 生效性由下一次 CI 运行背书。
+
 ## v0.6.52（对齐循环第 72 轮）
 
 /metrics 进 token 门。原注释 "no token: bind localhost or firewall it"

@@ -13,10 +13,14 @@ jobs:
         with:
           go-version: "1.21"
       - run: go vet ./...
+      - run: echo "::add-matcher::.github/matchers/gotest.json"
       - run: go test ./...
+      - run: echo "::remove-matcher owner=gotest-fail::" && echo "::remove-matcher owner=gotest-pkgfail::" && echo "::remove-matcher owner=gotest-panic::"
       - run: go build -trimpath -ldflags "-s -w" -o chatmux .
       - name: end-to-end smoke
-        run: scripts/smoke.sh 18097
+        run: |
+          echo "::add-matcher::.github/matchers/smoke.json"
+          scripts/smoke.sh 18097
       - uses: actions/upload-artifact@v4
         with:
           name: chatmux-linux-amd64

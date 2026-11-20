@@ -390,6 +390,12 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.53（对齐循环第 73 轮）：CI 失败可读化——三次同签名 flake（exit 1 无
+FAIL 注解）都卡在"日志 API 匿名 403、注解只有 exit code"。给 ci.yml 装
+problem matcher（`--- FAIL:`/`FAIL\t`/`panic:`/smoke `FAIL:` 全转注解，
+annotations API 匿名可读），smoke 失败改全量 dump daemon.log 进步骤日志；
+下次 flake 直接点名失败测试/原因，不再盲猜。
+
 v0.6.52（对齐循环第 72 轮）：/metrics 进 token 门——设了 adminToken 时逐
 agent 的调用量/token 数/错误计数与 /admin/* 一样要求鉴权（header 或
 `?token=`，Prometheus scrape 配置加参即可）；未设 token 保持开放（回环
@@ -412,9 +418,5 @@ v0.6.49（对齐循环第 69 轮）：docwatch 行级 diff 重做——先跳公
 v0.6.48（对齐循环第 68 轮）：通道退避重连计数上指标
 （chatmux_channel_reconnects_total，攀升=凭据失效/上游抖动）；runServer
 启动期四处 log.Fatalf 清零，测试进程再无被杀路径。
-
-v0.6.47（对齐循环第 67 轮）：CI flake 根因——runServer bind 失败原走
-log.Fatalf 杀整进程（临时端口被抢时测试二进制陪葬、无 FAIL 注解）；
-改同步绑定+优雅停机返回码，两轮神秘 CI 失败的签名终于对上。
 
 MIT

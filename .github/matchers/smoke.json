@@ -1,0 +1,16 @@
+{
+  "problemMatcher": [
+    {
+      "owner": "smoke-fail",
+      "severity": "error",
+      "pattern": [
+        {
+          "regexp": "^FAIL: (.*)$",
+          "file": "scripts/smoke.sh",
+          "line": 35,
+          "message": 1
+        }
+      ]
+    }
+  ]
+}
