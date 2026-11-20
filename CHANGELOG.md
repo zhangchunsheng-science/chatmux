@@ -3,6 +3,16 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.52（对齐循环第 72 轮）
+
+/metrics 进 token 门。原注释 "no token: bind localhost or firewall it"
+是个权衡，但与第 70 轮的方向矛盾：设了 adminToken 的部署里 /admin/* 全
+锁，而逐 agent 调用量、token 消耗、错误计数（业务规模信号）对任何能到
+端口的人开放。现在 adminToken 非空时 /metrics 用同一 guard（X-Admin-Token
+header 或 ?token=，Prometheus scrape 配置加参即可）；未设 token 保持开放
+——回环监听的本地部署零变化。smoke 冒烟本来就带 token（顺带验证了带参
+路径），admin 鉴权守护测试扩两断言：无 token 401、带 header 200。
+
 ## v0.6.51（对齐循环第 71 轮）
 
 附件保留期补上磁盘增长家族最后一块：`dataDir/attachments/` 只进不出——

@@ -330,7 +330,9 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   单点崩溃不再带走整个进程
 - `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
   每 agent 调用数与 token、👍/👎 总量、uptime、看门狗触发数、流启动重试数、
-  通道退避重连数（攀升=凭据失效或上游抖动）
+  通道退避重连数（攀升=凭据失效或上游抖动）；设了 adminToken 则同
+  /admin/* 一样要求 token（header 或 `?token=`，scrape 配置加参即可），
+  未设保持开放
 - `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）；
   `/admin/send` 带可选 `file` 字段即上传宿主文件到聊天（飞书/Telegram/
   Discord/Slack 支持，图片自动按照片/图片发）
@@ -388,6 +390,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.52（对齐循环第 72 轮）：/metrics 进 token 门——设了 adminToken 时逐
+agent 的调用量/token 数/错误计数与 /admin/* 一样要求鉴权（header 或
+`?token=`，Prometheus scrape 配置加参即可）；未设 token 保持开放（回环
+监听/防火墙场景不受影响）。
+
 v0.6.51（对齐循环第 71 轮）：附件保留期——`dataDir/attachments/` 原来
 只进不出（图片/语音按内容哈希落盘、全仓库无一处删除），补 `attachmentRetention`
 （默认 72h，"0" 关闭）：启动即清扫 + 每小时一轮，过期删除；文件按需重取，
@@ -409,9 +416,5 @@ v0.6.48（对齐循环第 68 轮）：通道退避重连计数上指标
 v0.6.47（对齐循环第 67 轮）：CI flake 根因——runServer bind 失败原走
 log.Fatalf 杀整进程（临时端口被抢时测试二进制陪葬、无 FAIL 注解）；
 改同步绑定+优雅停机返回码，两轮神秘 CI 失败的签名终于对上。
-
-v0.6.46（对齐循环第 66 轮）：chatmux init——零凭据起点配置（echo
-agent+随机 token+控制台地址）三行上手；缺配置报错带指引；首跑旅程
-init→启动→问答→healthz 实测全通。
 
 MIT

@@ -958,8 +958,17 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		writeJSON(w, map[string]string{"messageId": id})
 	})
 
-	// Prometheus scrape endpoint (no token: bind localhost or firewall it).
+	// Prometheus scrape endpoint. With adminToken set it requires the
+	// same token as /admin/* (header or ?token= — scrapers add the
+	// param); without a token it stays open: bind loopback or firewall.
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.HTTP.AdminToken != "" &&
+			r.Header.Get("X-Admin-Token") != cfg.HTTP.AdminToken &&
+			r.URL.Query().Get("token") != cfg.HTTP.AdminToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("unauthorized"))
+			return
+		}
 		var b strings.Builder
 		gauge := func(name, help string, v float64) {
 			b.WriteString("# HELP " + name + " " + help + "\n# TYPE " + name + " gauge\n" +

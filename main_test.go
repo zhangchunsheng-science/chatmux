@@ -187,6 +187,28 @@ func TestAdminRoutesRequireToken(t *testing.T) {
 			}
 		}
 	}
+
+	// /metrics carries per-agent traffic and error counts — with a
+	// token set it must sit behind the same guard as /admin/* (header
+	// or ?token=, so Prometheus scrape configs just add the param).
+	resp, err := client.Get(base + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("GET /metrics without token = %d, want 401", resp.StatusCode)
+	}
+	req, _ := http.NewRequest(http.MethodGet, base+"/metrics", nil)
+	req.Header.Set("X-Admin-Token", "t")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /metrics with token = %d, want 200", resp.StatusCode)
+	}
 }
 
 // panicChan panics on its first Start (malformed upstream payload),
