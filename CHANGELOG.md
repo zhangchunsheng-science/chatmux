@@ -3,6 +3,16 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.38（对齐循环第 58 轮）
+
+admin 路由鉴权守护——TestAdminRoutesRequireToken 从 main.go 源码提取
+全部 /admin/* 路由，起真实 server 逐条断言无 token 请求一律 401（GET+
+POST × 全路由）。首跑即抓到三个真 bug：/admin/stop、/admin/history、
+/admin/send 的 handler 方法检查先于鉴权，未认证调用方拿到 405 而非 401
+（路由语义泄漏）；已统一改为先 guard 后 method。测试用临时端口，-count=2
+双跑真实执行不跳过。守护测试抓虫第四例（前三：示例配置、发布产物混装、
+i18n 裸键名）。
+
 ## v0.6.37（对齐循环第 57 轮）
 
 README 命令表防漂移守护——dispatch 命令集（agent.go 的 26 条 case "/x"）

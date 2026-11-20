@@ -731,11 +731,11 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		})
 	})
 	mux.HandleFunc("/admin/stop", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if !guard(w, r) {
 			return
 		}
-		if !guard(w, r) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		writeJSON(w, map[string]string{"status": "stopping"})
@@ -757,11 +757,11 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		writeJSON(w, aggs)
 	})
 	mux.HandleFunc("/admin/history", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if !guard(w, r) {
 			return
 		}
-		if !guard(w, r) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		limit := 20
@@ -779,11 +779,11 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		writeJSON(w, map[string]any{"messages": msgs, "count": len(msgs)})
 	})
 	mux.HandleFunc("/admin/send", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if !guard(w, r) {
 			return
 		}
-		if !guard(w, r) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {

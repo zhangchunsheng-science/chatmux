@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -103,6 +106,77 @@ func TestReadmeDocumentsAllCommands(t *testing.T) {
 	for cmd := range cmds {
 		if !bytes.Contains(section, []byte("`"+cmd)) {
 			t.Errorf("README 聊天内命令 table is missing %s", cmd)
+		}
+	}
+}
+
+// TestAdminRoutesRequireToken: with an adminToken configured, every
+// registered /admin/* route must reject unauthenticated requests. A
+// handler added without the guard is an open admin API — v0.4.3 fixed
+// exactly such a hole on GET /admin/ask; this keeps it from coming
+// back. Routes are discovered from the source at test time.
+func TestAdminRoutesRequireToken(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`HandleFunc\("(/admin/[a-z]+)"`)
+	var paths []string
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		paths = append(paths, m[1])
+	}
+	if len(paths) < 7 {
+		t.Fatalf("scan found only %d admin routes — source moved?", len(paths))
+	}
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "cm.json")
+	// ephemeral port (grab-and-release): with -count=2 the first server
+	// goroutine outlives the test, so a fixed port would silently skip
+	// the second run
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	cfg := `{"defaultAgent":"a","dataDir":` + strconv.Quote(filepath.ToSlash(dir)) + `,
+	  "http":{"listen":"127.0.0.1:` + strconv.Itoa(port) + `","adminToken":"t"},
+	  "agents":[{"name":"a","provider":"openai","apiKey":"k","baseUrl":"http://127.0.0.1:9/v1"}]}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = runServer(cfgPath) }()
+
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	up := false
+	for i := 0; i < 50; i++ {
+		if resp, err := http.Get(base + "/healthz"); err == nil {
+			resp.Body.Close()
+			up = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !up {
+		t.Skip("server did not come up (port busy?) — auth assertions skipped")
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, p := range paths {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			req, err := http.NewRequest(method, base+p, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("%s %s: %v", method, p, err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("%s %s without token = %d, want 401", method, p, resp.StatusCode)
+			}
 		}
 	}
 }
