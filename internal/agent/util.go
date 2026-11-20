@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
+	"github.com/zhangchunsheng-science/chatmux/internal/metrics"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
 
@@ -129,6 +130,7 @@ func streamWithRetry(ctx context.Context, p provider.Provider, req provider.Requ
 		return ch, err
 	}
 	log.Printf("model stream start failed (%v) — retrying once", err)
+	metrics.StreamRetry()
 	timer := time.NewTimer(streamRetryDelay)
 	defer timer.Stop()
 	select {

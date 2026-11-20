@@ -102,6 +102,7 @@ grep '"agent":"smoke-dead"' "$USAGE" | grep -q '"error":"[^"]' || fail "smoke-de
 
 METRICS="$(curl -sf -H "X-Admin-Token: $TOKEN" "$BASE/metrics")" || fail "metrics"
 echo "$METRICS" | grep -q 'chatmux_usage_errors_total{agent="smoke-dead"} ' || fail "metrics missing smoke-dead error counter"
+echo "$METRICS" | grep -Eq 'chatmux_stream_retries_total [1-9]' || fail "metrics missing stream retry counter for the dead-endpoint turn"
 echo "$METRICS" | grep -q 'chatmux_usage_calls_total{agent="smoke-ok"} ' || fail "metrics missing smoke-ok call counter"
 
 # ---- graceful stop ----

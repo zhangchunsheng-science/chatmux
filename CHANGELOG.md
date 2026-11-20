@@ -3,6 +3,19 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.30（对齐循环第 52 轮）
+
+韧性事件上指标——turn 看门狗触发与模型流启动重试此前只有 daemon 日志可
+见，/metrics 现在暴露 `chatmux_turn_watchdog_fires_total` 与
+`chatmux_stream_retries_total`（internal/metrics 原子计数，进程内全局）；
+冒烟脚本死端口轮顺带断言重试计数 ≥1。metrics 包测试 0→1（门禁 24 包）。
+
+## v0.6.29（对齐循环第 51 轮）
+
+README 瘦身——逐轮打磨记录移入 CHANGELOG.md（v0.1 起完整历史，与 tag
+一一对应），README 状态只留最近 6 轮 + 指引链接，首页回到"讲清产品"而
+不是 245 行开发日志。
+
 ## v0.6.28（对齐循环第 50 轮）
 
 冒烟进 CI——`ci.yml` 在 vet+test+build 之后跑 `scripts/smoke.sh`：从"本地

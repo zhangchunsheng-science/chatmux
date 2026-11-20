@@ -21,6 +21,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
 	"github.com/zhangchunsheng-science/chatmux/internal/config"
 	"github.com/zhangchunsheng-science/chatmux/internal/cron"
+	"github.com/zhangchunsheng-science/chatmux/internal/metrics"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
 	"github.com/zhangchunsheng-science/chatmux/internal/usage"
@@ -254,6 +255,7 @@ func (r *Runtime) launchTurn(key session.Key, msg channel.Message, agentCfg *con
 		r.executeTurn(tctx, key, t, msg, "")
 		if tctx.Err() == context.DeadlineExceeded {
 			log.Printf("turn watchdog: %s/%s agent=%s hit turn budget — cancelled", key.Channel, key.ChatID, agentCfg.Name)
+			metrics.WatchdogFire()
 		}
 		queued := t.queued
 		t.queued = nil

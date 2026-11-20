@@ -44,6 +44,7 @@ import (
 	"github.com/zhangchunsheng-science/chatmux/internal/docwatch"
 	"github.com/zhangchunsheng-science/chatmux/internal/fleet"
 	"github.com/zhangchunsheng-science/chatmux/internal/mcp"
+	"github.com/zhangchunsheng-science/chatmux/internal/metrics"
 	"github.com/zhangchunsheng-science/chatmux/internal/oncall"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 	"github.com/zhangchunsheng-science/chatmux/internal/session"
@@ -860,6 +861,11 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 		gauge("chatmux_turns_in_flight", "Foreground turns currently running.", toF(st["turnsInFlight"]))
 		gauge("chatmux_bg_jobs_active", "Background jobs currently running.", float64(len(toI(st["backgroundJobs"]))))
 		gauge("chatmux_uptime_seconds", "Seconds since server start.", time.Since(started).Seconds())
+		wdFires, sRetries := metrics.Snapshot()
+		b.WriteString("# HELP chatmux_turn_watchdog_fires_total Turns cancelled by the turn-budget watchdog.\n# TYPE chatmux_turn_watchdog_fires_total counter\n" +
+			fmt.Sprintf("chatmux_turn_watchdog_fires_total %d\n", wdFires))
+		b.WriteString("# HELP chatmux_stream_retries_total Model stream starts retried after transient failure.\n# TYPE chatmux_stream_retries_total counter\n" +
+			fmt.Sprintf("chatmux_stream_retries_total %d\n", sRetries))
 
 		aggs, err := usage.Summarize(cfg.DataDir)
 		if err == nil {

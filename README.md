@@ -319,7 +319,7 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 - `GET /healthz` — 存活/降级探测（任一通道断开即 503）
 - `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
-  每 agent 调用数与 token、👍/👎 总量、uptime
+  每 agent 调用数与 token、👍/👎 总量、uptime、看门狗触发数、流启动重试数
 - `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）；
   `/admin/send` 带可选 `file` 字段即上传宿主文件到聊天（飞书/Telegram/
   Discord/Slack 支持，图片自动按照片/图片发）
@@ -367,6 +367,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.30（对齐循环第 52 轮）：韧性事件上指标——看门狗触发数
+（chatmux_turn_watchdog_fires_total）与流启动重试数
+（chatmux_stream_retries_total）进 /metrics，此前只有 daemon 日志可
+见；internal/metrics 原子计数包，冒烟死端口轮断言重试计数。
+
 v0.6.29（对齐循环第 51 轮）：README 瘦身——逐轮记录移入 CHANGELOG.md
 （v0.1 起完整历史，与 tag 一一对应），README 状态只留最近 6 轮 + 指引链
 接，首页回到"讲清产品"而不是 245 行开发日志。
@@ -394,18 +399,6 @@ routes/cron/workflows/docwatch/i18n/http 语义检查 + 各通道真实构造（
 形状、AES key 长度等启动时才爆的错提前暴露），docwatch 路径未就绪为警告。
 顺手修了 example 两处自查发现：wecom 占位 AES key 长度非法、docwatch 示
 例路径说明。example 现在 check 全绿。
-
-v0.6.24（对齐循环第 46 轮）：cli-sessions.json 封顶——CLI 恢复 id 表原来
-无界增长；现每条带时间戳、超 2000 条按最陈旧淘汰，旧纯字符串格式自动迁
-移。顺带复检：全部包 -race 与 -count=2 全绿（自第 34 轮以来又改过多处
-并发路径）。
-
-v0.6.23（对齐循环第 45 轮）：Discord 语音转写补齐——附件分类原来靠 URL
-后缀猜（大小写敏感、语音一律算文件），现在优先用 content_type（image/*、
-audio/*），后缀仅兜底且不区分大小写；transcribeAudio 支持无下载器通道的
-公开音频 URL（Discord CDN 语音消息）直接取回送转写。discord 包测试从
-0 到 1。
-
 更早轮次（v0.1 → v0.6.22，对齐循环第 1–44 轮）见
 [CHANGELOG.md](CHANGELOG.md)。
 
