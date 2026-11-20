@@ -3,6 +3,17 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.57（对齐循环第 77 轮）
+
+flake 追查装备升级。v0.6.56 的 ci 失败是注解管道首次实战战果：点名
+TestBusyAndShutdownDrain、时长 0.00s（瞬时失败，非 2s 轮询超时路径）——
+但断言消息行（agent_test.go:984: want 1, got 2 这类）不在注解里，仍定位
+不到是哪个 Fatalf、看到了什么值。本地全手段复现失败（race×20、shuffle×3、
+GOMAXPROCS=2 均绿），判断为 runner 特有时序。本轮：注解管道补捕获
+`_test.go:行号: ` 断言输出行（上限 40 行）；ci 在全量测试前加 agent 包
+压测步（GOMAXPROCS=2 + -shuffle=on + -count=3，最贴近 2 核 runner 的
+调度时序）。下次复现，注解直接给出断言与实值。
+
 ## v0.6.56（对齐循环第 76 轮）
 
 持久化原子写修复（真 bug）。四处状态持久化（sessions.json、去重缓存、

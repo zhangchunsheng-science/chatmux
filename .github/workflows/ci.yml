@@ -13,6 +13,12 @@ jobs:
         with:
           go-version: "1.21"
       - run: go vet ./...
+      # timing-stress the flakiest package under runner conditions
+      # (2 cores, shuffled order, repeated) before the full sweep
+      - name: agent package stress
+        run: |
+          set -o pipefail
+          GOMAXPROCS=2 go test ./internal/agent/ -count=3 -shuffle=on 2>&1 | tee stress.log
       - name: go test
         run: |
           set -o pipefail
@@ -29,9 +35,12 @@ jobs:
       - name: annotate failures
         if: failure()
         run: |
-          { grep -hE '^ *--- FAIL: |^FAIL\t|^panic: ' gotest.log 2>/dev/null || true
+          { grep -hE '^ *--- FAIL: |^FAIL\t|^panic: ' gotest.log stress.log 2>/dev/null || true
+            # assertion output: "    agent_test.go:984: want 1, got 2" —
+            # without these the --- FAIL header alone says nothing
+            grep -hE '^ +[a-z_0-9]+_test\.go:[0-9]+: ' gotest.log stress.log 2>/dev/null || true
             grep -hE '^FAIL: ' smoke.log 2>/dev/null || true
-          } | head -30 | while IFS= read -r l; do
+          } | head -40 | while IFS= read -r l; do
             echo "::error file=go.mod,line=1::${l}"
           done
       - uses: actions/upload-artifact@v4

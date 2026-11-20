@@ -391,6 +391,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.57（对齐循环第 77 轮）：flake 追查装备升级——v0.6.56 的 ci 失败首次被
+注解点名（TestBusyAndShutdownDrain，0.00s 即败），但断言消息行（want X got Y）
+不在注解里仍无法定位。注解管道补 `_test.go:行号:` 断言行捕获；ci 新增
+agent 包 GOMAXPROCS=2 + shuffle + count=3 压测步（贴近 2 核 runner 时序）。
+
 v0.6.56（对齐循环第 76 轮）：持久化原子写修复——四个状态文件（sessions/
 dedup/cli-sessions/schedules）原来共用固定 `<path>.tmp`，每轮 turn 异步保存，
 并发时两个 goroutine 交错写同一临时文件再 rename，损坏的 sessions.json 被
@@ -417,10 +422,5 @@ v0.6.52（对齐循环第 72 轮）：/metrics 进 token 门——设了 adminTo
 agent 的调用量/token 数/错误计数与 /admin/* 一样要求鉴权（header 或
 `?token=`，Prometheus scrape 配置加参即可）；未设 token 保持开放（回环
 监听/防火墙场景不受影响）。
-
-v0.6.51（对齐循环第 71 轮）：附件保留期——`dataDir/attachments/` 原来
-只进不出（图片/语音按内容哈希落盘、全仓库无一处删除），补 `attachmentRetention`
-（默认 72h，"0" 关闭）：启动即清扫 + 每小时一轮，过期删除；文件按需重取，
-只花一次重新下载。至此会话/usage/去重/cli-sessions/附件五类磁盘增长全部封顶。
 
 MIT
