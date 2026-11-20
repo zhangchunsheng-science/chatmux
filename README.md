@@ -336,7 +336,7 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   `/app/data`
 - **systemd**：`deploy/systemd/chatmux.service`（含读写目录加固）
 - **launchd**：`deploy/launchd/com.zhangchunsheng.chatmux.plist`
-- **CI/发布**：push 跑 vet+test+build；打 `v*` tag 自动交叉编译
+- **CI/发布**：push 跑 vet+test+build+端到端冒烟；打 `v*` tag 自动交叉编译
   linux/darwin/windows × amd64/arm64 并挂到 GitHub Release
 - **冒烟**：`scripts/smoke.sh`——本地端到端（构建→check→起实例→成功轮
   +失败轮→记账核对→优雅停机），零凭据零外网
@@ -366,6 +366,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   企微/钉钉语音同样取回后送转写
 
 ## 状态
+
+v0.6.28（对齐循环第 50 轮）：冒烟进 CI——`ci.yml` 在 vet+test+build 之后
+跑 `scripts/smoke.sh`：从"本地手动验证过一次"变成"每次 push 都端到端回
+归"，成功轮/失败轮/记账面/优雅停机任何一环退化都会挡住合并。
 
 v0.6.27（对齐循环第 49 轮）：`scripts/smoke.sh`——端到端冒烟脚本入库：
 临时目录起一套独立实例，零凭据零外网跑通完整对话（generic CLI agent 挂

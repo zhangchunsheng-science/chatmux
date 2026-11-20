@@ -15,6 +15,8 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go build -trimpath -ldflags "-s -w" -o chatmux .
+      - name: end-to-end smoke
+        run: scripts/smoke.sh 18097
       - uses: actions/upload-artifact@v4
         with:
           name: chatmux-linux-amd64
