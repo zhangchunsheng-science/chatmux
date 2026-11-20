@@ -358,12 +358,18 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - 企业微信回调按官方 AES-256-CBC + SHA1 签名规范，任何不匹配直接 403
 - 会话去重存储与状态文件落在 `dataDir`（默认 `data/`），权限 0600
 - 图片下载：飞书按 image_key 走 im 资源接口、Telegram 走 getFile、Slack
-  带 bot token 拉 url_private、企微按 media_id 走 media/get、Discord 直接
+  带 bot token 拉 url_private、企微按 media_id 走 media/get、钉钉按
+  downloadCode 走 messageFiles/download（需配 robotCode）、Discord 直接
   用公开 CDN URL，落到 `dataDir/attachments/` 后以本地文件喂给视觉模型。
-  企微语音同样经 media/get 取回后送转写。已知边界：钉钉 Stream 消息暂不
-  解析附件
+  企微/钉钉语音同样取回后送转写
 
 ## 状态
+
+v0.6.21（对齐循环第 43 轮）：钉钉附件落地——六通道附件覆盖收口。图片/
+语音/文件消息解析 content.downloadCode，经 app token（复用已有缓存）+
+messageFiles/download 两步换取临时 URL 再取字节；需要渠道配 robotCode。
+至此六通道（飞书/钉钉/企微/TG/Slack/Discord）图片全覆盖，语音转写覆盖
+飞书/TG/企微/钉钉。
 
 v0.6.20（对齐循环第 42 轮）：企微附件落地——file/voice 原来只有 media_id
 没有下载器，语音消息被静默丢弃（转写从未见过它们）、文件无人认领。企微

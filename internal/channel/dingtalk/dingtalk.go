@@ -149,7 +149,7 @@ func (d *DingTalk) toMessage(data *chatbot.BotCallbackDataModel) (channel.Messag
 		chatType = "p2p"
 	}
 	text := strings.TrimSpace(data.Text.Content)
-	return channel.Message{
+	msg := channel.Message{
 		ID:        data.MsgId,
 		Channel:   d.name,
 		ChatID:    data.ConversationId,
@@ -159,7 +159,33 @@ func (d *DingTalk) toMessage(data *chatbot.BotCallbackDataModel) (channel.Messag
 		Text:      text,
 		Raw:       data,
 		Timestamp: time.UnixMilli(data.CreateAt),
-	}, true
+	}
+	// rich messages (picture/voice/file) carry a downloadCode in the
+	// generic content blob; Download swaps it for bytes
+	if code := contentCode(data.Content); code != "" {
+		switch strings.ToLower(data.Msgtype) {
+		case "picture", "image":
+			msg.Attachments = append(msg.Attachments, channel.Attachment{Type: "image", Key: code})
+		case "voice", "audio":
+			msg.Attachments = append(msg.Attachments, channel.Attachment{Type: "audio", Key: code})
+		case "file":
+			msg.Attachments = append(msg.Attachments, channel.Attachment{Type: "file", Key: code})
+		}
+	}
+	return msg, true
+}
+
+// contentCode pulls downloadCode out of the SDK's generic content field.
+func contentCode(v any) string {
+	switch m := v.(type) {
+	case map[string]any:
+		if s, ok := m["downloadCode"].(string); ok {
+			return s
+		}
+	case map[string]string:
+		return m["downloadCode"]
+	}
+	return ""
 }
 
 func contains(xs []string, v string) bool {
@@ -264,4 +290,56 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// Download implements channel.AttachmentDownloader: a downloadCode is
+// swapped for a temporary URL at messageFiles/download (token via the
+// shared cached token() helper), which then serves the bytes.
+func (d *DingTalk) Download(ctx context.Context, att channel.Attachment) ([]byte, string, error) {
+	if att.Key == "" {
+		return nil, "", fmt.Errorf("dingtalk: attachment has no downloadCode")
+	}
+	if d.opts.RobotCode == "" {
+		return nil, "", fmt.Errorf("dingtalk: robotCode required for file download")
+	}
+	tok, err := d.token(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	b, _ := json.Marshal(map[string]string{"downloadCode": att.Key, "robotCode": d.opts.RobotCode})
+	req, err := http.NewRequestWithContext(ctx, "POST", d.opts.APIBase+"/v1.0/robot/messageFiles/download", bytes.NewReader(b))
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	var dl struct {
+		Result struct {
+			DownloadURL string `json:"downloadUrl"`
+		} `json:"result"`
+	}
+	if err := d.doReq(req, &dl); err != nil {
+		return nil, "", err
+	}
+	if dl.Result.DownloadURL == "" {
+		return nil, "", fmt.Errorf("dingtalk: no downloadUrl for %s", att.Key)
+	}
+	getReq, _ := http.NewRequestWithContext(ctx, "GET", dl.Result.DownloadURL, nil)
+	resp, err := d.client.Do(getReq)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("dingtalk file download: %s", resp.Status)
+	}
+	data, err := channel.ReadCapped(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" || mime == "application/octet-stream" {
+		mime = http.DetectContentType(data)
+	}
+	return data, mime, nil
 }

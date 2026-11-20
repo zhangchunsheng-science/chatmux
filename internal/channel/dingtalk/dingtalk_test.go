@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/event"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
@@ -149,6 +150,78 @@ func TestProactiveSender(t *testing.T) {
 	// missing robotCode → clear error, no request
 	s2 := &proactiveSender{d: d, t: &ProactiveTarget{ConversationID: "cid9"}}
 	if _, err := s2.Send(context.Background(), "x", channel.SendOptions{Final: true}); err == nil {
+		t.Fatal("want error without robotCode")
+	}
+}
+
+func TestToMessageAttachments(t *testing.T) {
+	d := newTestDingTalk(t, Options{})
+	cases := []struct {
+		msgtype string
+		content any
+		wantTy  string
+		wantKey string
+	}{
+		{"picture", map[string]any{"downloadCode": "DC1"}, "image", "DC1"},
+		{"voice", map[string]any{"downloadCode": "DC2"}, "audio", "DC2"},
+		{"file", map[string]any{"downloadCode": "DC3"}, "file", "DC3"},
+		{"text", map[string]any{"nothing": 1}, "", ""},
+	}
+	for _, c := range cases {
+		msg, ok := d.toMessage(&chatbot.BotCallbackDataModel{
+			MsgId: "m-" + c.msgtype, Msgtype: c.msgtype, Content: c.content,
+			ConversationId: "cid", SenderStaffId: "u1", Text: chatbot.BotCallbackDataTextModel{Content: "你好"},
+		})
+		if !ok {
+			t.Fatalf("%s: not accepted", c.msgtype)
+		}
+		if c.wantTy == "" {
+			if len(msg.Attachments) != 0 {
+				t.Fatalf("%s: unexpected attachments %+v", c.msgtype, msg.Attachments)
+			}
+			continue
+		}
+		if len(msg.Attachments) != 1 || msg.Attachments[0].Type != c.wantTy || msg.Attachments[0].Key != c.wantKey {
+			t.Fatalf("%s: attachments = %+v", c.msgtype, msg.Attachments)
+		}
+	}
+}
+
+func TestDownload(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "tok", "expireIn": 7200})
+		case "/v1.0/robot/messageFiles/download":
+			if r.Header.Get("Authorization") != "Bearer tok" {
+				t.Error("missing bearer token")
+			}
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["robotCode"] != "rc1" || body["downloadCode"] != "DC9" {
+				t.Errorf("download body: %+v", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true,
+				"result": map[string]string{"downloadUrl": "http://" + r.Host + "/tmp-file"}})
+		case "/tmp-file":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("pngdata"))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	d := newTestDingTalk(t, Options{RobotCode: "rc1"})
+	d.opts.APIBase = srv.URL
+	data, mime, err := d.Download(context.Background(), channel.Attachment{Type: "image", Key: "DC9"})
+	if err != nil || string(data) != "pngdata" || mime != "image/png" {
+		t.Fatalf("download = %q %q %v", data, mime, err)
+	}
+	// missing robotCode → clear error, no request
+	d2 := newTestDingTalk(t, Options{})
+	d2.opts.APIBase = srv.URL
+	if _, _, err := d2.Download(context.Background(), channel.Attachment{Key: "DC9"}); err == nil {
 		t.Fatal("want error without robotCode")
 	}
 }
