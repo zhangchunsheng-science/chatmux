@@ -903,21 +903,39 @@ func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) stri
 	if !ok {
 		return ""
 	}
-	dl, ok := ch.(channel.AttachmentDownloader)
-	if !ok {
-		return ""
-	}
+	dl, _ := ch.(channel.AttachmentDownloader)
 	for _, att := range msg.Attachments {
-		if att.Type != "audio" || att.Key == "" {
+		if att.Type != "audio" {
 			continue
 		}
-		dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		data, mime, err := dl.Download(dctx, att)
-		cancel()
-		if err != nil || len(data) == 0 {
-			if err != nil {
-				log.Printf("attachment skip: %s/%s audio download failed: %v", msg.Channel, msg.ChatID, err)
+		var data []byte
+		var mime string
+		switch {
+		case att.Key != "" && dl != nil:
+			dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			d, m, err := dl.Download(dctx, att)
+			cancel()
+			if err != nil || len(d) == 0 {
+				if err != nil {
+					log.Printf("attachment skip: %s/%s audio download failed: %v", msg.Channel, msg.ChatID, err)
+				}
+				continue
 			}
+			data, mime = d, m
+		case att.URL != "":
+			// channels without a downloader can still carry public
+			// audio URLs (discord CDN voice messages)
+			dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			d, m, err := fetchURL(dctx, att.URL)
+			cancel()
+			if err != nil || len(d) == 0 {
+				if err != nil {
+					log.Printf("attachment skip: %s/%s audio fetch failed: %v", msg.Channel, msg.ChatID, err)
+				}
+				continue
+			}
+			data, mime = d, m
+		default:
 			continue
 		}
 		if len(data) > channel.MaxAttachmentBytes {
@@ -925,7 +943,7 @@ func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) stri
 				msg.Channel, msg.ChatID, float64(len(data))/(1<<20), channel.MaxAttachmentBytes>>20)
 			continue
 		}
-		p := filepath.Join(r.dataDir, "attachments", hashOf(att.Key)+"."+extOf(mime))
+		p := filepath.Join(r.dataDir, "attachments", hashOf(firstNonEmpty(att.Key, att.URL))+"."+extOf(mime))
 		if saveFile(p, data) != nil {
 			continue
 		}

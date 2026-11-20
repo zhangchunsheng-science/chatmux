@@ -324,8 +324,9 @@ func (d *Discord) toMessage(data json.RawMessage) (channel.Message, bool) {
 			} `json:"author"`
 		} `json:"referenced_message"`
 		Attachments []struct {
-			URL      string `json:"url"`
-			Filename string `json:"filename"`
+			URL         string `json:"url"`
+			Filename    string `json:"filename"`
+			ContentType string `json:"content_type"`
 		} `json:"attachments"`
 	}
 	if json.Unmarshal(data, &m) != nil {
@@ -374,8 +375,16 @@ func (d *Discord) toMessage(data json.RawMessage) (channel.Message, bool) {
 		}
 	}
 	for _, a := range m.Attachments {
+		// content_type is authoritative (voice messages are audio/ogg
+		// mpeg); URL substring is only the fallback
 		kind := "file"
-		if strings.Contains(a.URL, ".png") || strings.Contains(a.URL, ".jpg") || strings.Contains(a.URL, ".jpeg") || strings.Contains(a.URL, ".webp") || strings.Contains(a.URL, ".gif") {
+		lowerURL := strings.ToLower(a.URL)
+		switch {
+		case strings.HasPrefix(a.ContentType, "image/"):
+			kind = "image"
+		case strings.HasPrefix(a.ContentType, "audio/"):
+			kind = "audio"
+		case strings.Contains(lowerURL, ".png") || strings.Contains(lowerURL, ".jpg") || strings.Contains(lowerURL, ".jpeg") || strings.Contains(lowerURL, ".webp") || strings.Contains(lowerURL, ".gif"):
 			kind = "image"
 		}
 		msg.Attachments = append(msg.Attachments, channel.Attachment{Type: kind, URL: a.URL, Name: a.Filename})

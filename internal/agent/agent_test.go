@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1099,4 +1101,36 @@ type errDlChannel struct{ stubChannel }
 
 func (d *errDlChannel) Download(_ context.Context, _ channel.Attachment) ([]byte, string, error) {
 	return nil, "", fmt.Errorf("boom")
+}
+
+func TestTranscribeAudioViaURL(t *testing.T) {
+	// audio arriving as a public URL (discord voice) must be fetched and
+	// saved even when the channel has no AttachmentDownloader
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/ogg")
+		_, _ = w.Write([]byte("oggbytes"))
+	}))
+	defer srv.Close()
+
+	rt, _ := testRuntime()
+	rt.dataDir = t.TempDir()
+	rt.cfg.Transcribe = &config.TranscribeConfig{Enabled: true, Model: "whisper-1"}
+	rt.chans["feishu"] = &stubChannel{sender: &fakeSender{}} // no downloader
+	msg := channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1",
+		Attachments: []channel.Attachment{{Type: "audio", URL: srv.URL + "/voice.ogg"}}}
+	txt := rt.transcribeAudio(context.Background(), msg)
+	if txt != "" {
+		t.Fatalf("no API key configured — transcription must stay empty, got %q", txt)
+	}
+	// the fetch+save side effect proves the URL path ran
+	found := false
+	_ = filepath.Walk(filepath.Join(rt.dataDir, "attachments"), func(p string, _ os.FileInfo, err error) error {
+		if err == nil && strings.HasSuffix(p, ".bin") || strings.HasSuffix(p, ".ogg") {
+			found = true
+		}
+		return nil
+	})
+	if !found {
+		t.Fatal("URL audio was not fetched/saved")
+	}
 }

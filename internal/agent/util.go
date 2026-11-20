@@ -2,13 +2,16 @@
 package agent
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
 
@@ -83,3 +86,30 @@ func fmtDur(ms int64) string {
 // (channel.MaxAttachmentBytes): downloaders reject over-cap payloads at the
 // HTTP layer, and the runtime-side checks below are belt-and-braces for
 // channels that do not stream-cap yet.
+
+// fetchURL GETs a public attachment URL (no auth headers) under the
+// shared size cap — used for channels whose audio arrives as a plain
+// CDN link.
+func fetchURL(ctx context.Context, url string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("fetch %s: %s", url, resp.Status)
+	}
+	data, err := channel.ReadCapped(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" || mime == "application/octet-stream" {
+		mime = http.DetectContentType(data)
+	}
+	return data, mime, nil
+}
