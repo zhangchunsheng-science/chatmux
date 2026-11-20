@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,54 @@ func TestValidateNoChannelsIsWarning(t *testing.T) {
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "web-console") {
 		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
+func TestValidateWebChannelRoutesOK(t *testing.T) {
+	// "web" is always attached at boot — routes/cron targeting it must
+	// not be reported as unknown channels.
+	cfg := &Config{
+		Agents:       []AgentConfig{{Name: "a", Routes: []Route{{Channel: "web"}}}},
+		DefaultAgent: "a",
+		HTTP:         HTTPConfig{Listen: ":8080"},
+		Cron:         []CronConfig{{Name: "c", Schedule: "0 9 * * *", Channel: "web", ChatID: "console", Text: "早"}},
+		DataDir:      t.TempDir(),
+	}
+	if problems, _ := Validate(cfg); len(problems) != 0 {
+		t.Fatalf("web-channel routes flagged: %v", problems)
+	}
+}
+
+func TestValidateDataDirNotWritable(t *testing.T) {
+	// an unwritable dataDir silently disables usage logging at boot —
+	// check must warn about it up front
+	dir := t.TempDir()
+	sub := dir + "/data"
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	if err := os.Chmod(sub, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Agents:       []AgentConfig{{Name: "a"}},
+		DefaultAgent: "a",
+		HTTP:         HTTPConfig{Listen: ":8080"},
+		DataDir:      sub,
+	}
+	problems, warnings := Validate(cfg)
+	if len(problems) != 0 {
+		t.Fatalf("unwritable dataDir is advisory, not a problem: %v", problems)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "usage logging") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no dataDir warning among %v", warnings)
 	}
 }
 

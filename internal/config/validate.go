@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
@@ -41,8 +42,24 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		}
 		channels[name] = true
 	}
+	// The web console channel is always attached at boot (v0.4.6+), so
+	// routes/cron/docwatch may target "web" even with channels[] empty.
+	channels["web"] = true
 	if len(cfg.Channels) == 0 {
 		warn("channels: none configured — running as a web-console gateway (dashboard chat, admin API, MCP)")
+	}
+
+	// dataDir probe: when the dir can't be created or written, the usage
+	// logger silently disables itself (usage.New ignores open errors) and
+	// accounting is lost without any boot failure — surface it up front.
+	// A warning, not a problem: check may run as a different user than
+	// the service, so this is advisory.
+	dir := cfg.DataDir
+	if dir == "" {
+		dir = "data"
+	}
+	if err := probeWritable(dir); err != nil {
+		warn("dataDir %q: %v — usage logging would be silently disabled", dir, err)
 	}
 
 	agents := map[string]bool{}
@@ -143,4 +160,25 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		add("http: listen is required (e.g. \":8080\")")
 	}
 	return problems, warnings
+}
+
+// probeWritable reports whether dir can be written (created if missing,
+// via its parent — boot MkdirAlls it) by touching and removing a probe
+// file.
+func probeWritable(dir string) error {
+	if _, err := os.Stat(dir); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(dir)
+		if _, err := os.Stat(parent); err != nil {
+			return fmt.Errorf("parent %s not on disk: %v", parent, err)
+		}
+		dir = parent
+	}
+	probe := filepath.Join(dir, ".chatmux-check-probe")
+	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+		return fmt.Errorf("not writable: %v", err)
+	}
+	return os.Remove(probe)
 }

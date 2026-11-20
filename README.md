@@ -371,6 +371,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.35（对齐循环第 55 轮）：chatmux check 二次打磨——修 "web" 通道被
+冤报未知通道路由的误报；补 dataDir 可写探测（不可写时 usage 记账静默丢
+失，check 预先警告）。
+
 v0.6.34（对齐循环第 54 轮）：i18n 完整性——zh/en 键对齐 + say() 字面量
 全覆盖两个守护测试；当场抓到 /schedule 未知子命令回显裸键名的真 bug
 （补 zh/en 文案修复）。
@@ -390,10 +394,6 @@ v0.6.30（对齐循环第 52 轮）：韧性事件上指标——看门狗触发
 （chatmux_turn_watchdog_fires_total）与流启动重试数
 （chatmux_stream_retries_total）进 /metrics，此前只有 daemon 日志可
 见；internal/metrics 原子计数包，冒烟死端口轮断言重试计数。
-
-v0.6.29（对齐循环第 51 轮）：README 瘦身——逐轮记录移入 CHANGELOG.md
-（v0.1 起完整历史，与 tag 一一对应），README 状态只留最近 6 轮 + 指引链
-接，首页回到"讲清产品"而不是 245 行开发日志。
 更早轮次（v0.1 → v0.6.22，对齐循环第 1–44 轮）见
 [CHANGELOG.md](CHANGELOG.md)。
 
