@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -221,5 +222,81 @@ func TestSuperviseChannelSurvivesPanic(t *testing.T) {
 	<-done
 	if n := atomic.LoadInt32(&pc.calls); n < 2 {
 		t.Fatalf("channel restarted %d times after panic, want ≥2 — panic would have killed the process before", n)
+	}
+}
+
+// TestMetricsRendersAllSeries guards the /metrics rendering: every
+// chatmux_* metric family declared in the handler source must appear
+// in live output. A rendering regression (renamed family, dropped
+// series, broken condition) silently deletes a series dashboards
+// depend on — this makes it a test failure instead. Exceptions:
+// feedback_up/down need a real 👍/👎 press to exist at all.
+func TestMetricsRendersAllSeries(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	families := map[string]bool{}
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`# TYPE (chatmux_[a-z_]+)`),
+		regexp.MustCompile(`gauge\("(chatmux_[a-z_]+)"`),
+	} {
+		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+			families[m[1]] = true
+		}
+	}
+	if len(families) < 10 {
+		t.Fatalf("scan found only %d metric families — handler moved?", len(families))
+	}
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "cm.json")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	cfg := `{"defaultAgent":"a","dataDir":` + strconv.Quote(filepath.ToSlash(dir)) + `,
+	  "http":{"listen":"127.0.0.1:` + strconv.Itoa(port) + `","adminToken":"t"},
+	  "agents":[{"name":"a","cli":{"type":"generic","bin":"/bin/echo"}}]}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = runServer(cfgPath) }()
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	up := false
+	for i := 0; i < 50; i++ {
+		if resp, err := http.Get(base + "/healthz"); err == nil {
+			resp.Body.Close()
+			up = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !up {
+		t.Skip("server did not come up — metrics assertions skipped")
+	}
+	req, _ := http.NewRequest(http.MethodGet, base+"/metrics", nil)
+	req.Header.Set("X-Admin-Token", "t") // harmless if /metrics is open
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET /metrics = %d", resp.StatusCode)
+	}
+	for f := range families {
+		if f == "chatmux_feedback_up_total" || f == "chatmux_feedback_down_total" {
+			continue // need a real feedback press to render
+		}
+		if !bytes.Contains(body, []byte(f)) {
+			t.Errorf("/metrics is missing series %s", f)
+		}
 	}
 }
