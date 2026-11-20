@@ -358,12 +358,17 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - 企业微信回调按官方 AES-256-CBC + SHA1 签名规范，任何不匹配直接 403
 - 会话去重存储与状态文件落在 `dataDir`（默认 `data/`），权限 0600
 - 图片下载：飞书按 image_key 走 im 资源接口、Telegram 走 getFile、Slack
-  带 bot token 拉 url_private、Discord 直接用公开 CDN URL，落到
-  `dataDir/attachments/` 后以本地文件喂给视觉模型。已知边界：企微
-  image 用公开 pic_url，文件/语音 media_id 暂无下载（丢弃并记日志）；
-  钉钉 Stream 消息暂不解析附件
+  带 bot token 拉 url_private、企微按 media_id 走 media/get、Discord 直接
+  用公开 CDN URL，落到 `dataDir/attachments/` 后以本地文件喂给视觉模型。
+  企微语音同样经 media/get 取回后送转写。已知边界：钉钉 Stream 消息暂不
+  解析附件
 
 ## 状态
+
+v0.6.20（对齐循环第 42 轮）：企微附件落地——file/voice 原来只有 media_id
+没有下载器，语音消息被静默丢弃（转写从未见过它们）、文件无人认领。企微
+实现 media/get 下载（错误走 HTTP 200+JSON 的坑用 Content-Type 分流），
+voice 归类改 audio 进转写链路，image 补 Key 让下载优先于短时效 pic_url。
 
 v0.6.19（对齐循环第 41 轮）：Slack 图片修复——url_private 需要 bot token
 才能取，原来直接把裸 URL 喂给视觉模型（只能拿到登录页）。Slack 实现

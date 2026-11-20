@@ -225,12 +225,18 @@ func (w *WeCom) toMessage(p cbPlain) channel.Message {
 	}
 	switch p.MsgType {
 	case "image":
+		// Key set so media/get owns the fetch (pic_url is a short-lived
+		// link); the URL stays as fallback if the download fails
 		msg.Attachments = append(msg.Attachments, channel.Attachment{
-			Type: "image", URL: p.PicURL, Name: p.MediaID,
+			Type: "image", URL: p.PicURL, Name: p.MediaID, Key: p.MediaID,
 		})
-	case "file", "voice":
+	case "voice":
 		msg.Attachments = append(msg.Attachments, channel.Attachment{
-			Type: "file", Name: p.MediaID,
+			Type: "audio", Key: p.MediaID,
+		})
+	case "file":
+		msg.Attachments = append(msg.Attachments, channel.Attachment{
+			Type: "file", Key: p.MediaID,
 		})
 	}
 	return msg
@@ -302,6 +308,45 @@ type Sender struct {
 
 func (w *WeCom) SenderFor(msg channel.Message) (channel.Sender, error) {
 	return &Sender{w: w, chatID: msg.ChatID, chatType: msg.ChatType}, nil
+}
+
+// Download implements channel.AttachmentDownloader: file/voice/image
+// attachments arrive as media_id; media/get serves the bytes. Errors come
+// back as HTTP 200 with a JSON body, so the content type decides which
+// path we're on before anything is read as media.
+func (w *WeCom) Download(ctx context.Context, att channel.Attachment) ([]byte, string, error) {
+	if att.Key == "" {
+		return nil, "", fmt.Errorf("wecom: attachment has no media id")
+	}
+	tok, err := w.accessToken(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	u := fmt.Sprintf("%s/cgi-bin/media/get?access_token=%s&media_id=%s",
+		w.opts.APIBase, url.QueryEscape(tok), url.QueryEscape(att.Key))
+	req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+		var res apiResult
+		_ = json.NewDecoder(resp.Body).Decode(&res)
+		return nil, "", fmt.Errorf("wecom media/get: %d %s", res.ErrCode, res.ErrMsg)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("wecom media/get: %s", resp.Status)
+	}
+	data, err := channel.ReadCapped(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" || mime == "application/octet-stream" {
+		mime = http.DetectContentType(data)
+	}
+	return data, mime, nil
 }
 
 func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions) (string, error) {

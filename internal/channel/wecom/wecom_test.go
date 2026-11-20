@@ -1,8 +1,14 @@
 package wecom
 
 import (
+	"context"
 	"encoding/xml"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 )
 
 func toPlain(t *testing.T, raw string) cbPlain {
@@ -58,5 +64,44 @@ func TestChatMessageStillParses(t *testing.T) {
 	m := w.toMessage(p)
 	if m.Text != "你好" || m.ChatType != "group" || m.ChatID != "wrk1" {
 		t.Fatalf("chat message parse: %+v", m)
+	}
+}
+
+func wecomTestServer(t *testing.T, media map[string][]byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/cgi-bin/gettoken"):
+			_, _ = w.Write([]byte(`{"errcode":0,"access_token":"tok","expires_in":7200}`))
+		case strings.HasSuffix(r.URL.Path, "/cgi-bin/media/get"):
+			id := r.URL.Query().Get("media_id")
+			data, ok := media[id]
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"errcode":40058,"errmsg":"invalid media_id"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "audio/amr")
+			_, _ = w.Write(data)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func TestDownload(t *testing.T) {
+	srv := wecomTestServer(t, map[string][]byte{"VOICE1": []byte("amrbytes")})
+	defer srv.Close()
+	w := &WeCom{opts: Options{CorpID: "corp", Secret: "sec", APIBase: srv.URL}, client: srv.Client()}
+
+	data, mime, err := w.Download(context.Background(), channel.Attachment{Type: "audio", Key: "VOICE1"})
+	if err != nil || string(data) != "amrbytes" || mime != "audio/amr" {
+		t.Fatalf("download = %q %q %v", data, mime, err)
+	}
+	if _, _, err := w.Download(context.Background(), channel.Attachment{Type: "audio", Key: "NOPE"}); err == nil {
+		t.Fatal("want error for unknown media_id")
+	}
+	if _, _, err := w.Download(context.Background(), channel.Attachment{Type: "audio"}); err == nil {
+		t.Fatal("want error for empty media id")
 	}
 }
