@@ -28,11 +28,21 @@ type Record struct {
 	Error        string `json:"error,omitempty"` // non-empty = failed call
 }
 
-// Logger appends records to <dataDir>/usage.jsonl.
+// Logger appends records to <dataDir>/usage.jsonl. The file is
+// size-rotated: past rotateBytes it moves to usage.jsonl.1 (one backup
+// kept) and a fresh log starts — an append-only file plus Summarize's
+// full-file read would otherwise grow without bound on long-running
+// instances.
 type Logger struct {
 	mu sync.Mutex
 	f  *os.File
+
+	maxBytes int64
+	written  int64
 }
+
+// rotateBytes caps usage.jsonl before rotation (~50k records).
+const rotateBytes = 10 << 20
 
 // New opens (append) the usage log under dataDir.
 func New(dataDir string) *Logger {
@@ -44,7 +54,11 @@ func New(dataDir string) *Logger {
 	if err != nil {
 		return &Logger{} // disabled; Log is a no-op
 	}
-	return &Logger{f: f}
+	l := &Logger{f: f, maxBytes: rotateBytes}
+	if st, err := f.Stat(); err == nil {
+		l.written = st.Size()
+	}
+	return l
 }
 
 // Log appends one record with a timestamp.
@@ -57,9 +71,35 @@ func (l *Logger) Log(rec Record) {
 	if err != nil {
 		return
 	}
+	b = append(b, '\n')
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, _ = l.f.Write(append(b, '\n'))
+	if l.maxBytes > 0 && l.written > 0 && l.written+int64(len(b)) > l.maxBytes {
+		l.rotateLocked()
+		if l.f == nil {
+			return
+		}
+	}
+	n, _ := l.f.Write(b)
+	l.written += int64(n)
+}
+
+// rotateLocked swaps the current log to usage.jsonl.1 (replacing any
+// older backup) and reopens fresh. Failures degrade to appending.
+func (l *Logger) rotateLocked() {
+	path := l.f.Name()
+	_ = l.f.Close()
+	_ = os.Rename(path, path+".1")
+	nf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		l.f = nil // cannot log safely anymore; disable
+		return
+	}
+	l.f = nf
+	l.written = 0
+	if st, err := nf.Stat(); err == nil {
+		l.written = st.Size() // rename failed? keep counting the old size
+	}
 }
 
 // Close flushes and closes the log.

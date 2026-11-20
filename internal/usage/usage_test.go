@@ -105,3 +105,52 @@ func TestSummarizeAvgMs(t *testing.T) {
 		t.Fatalf("avg = %d, want 500", aggs[0].AvgMs)
 	}
 }
+
+func TestLoggerRotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "usage.jsonl")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &Logger{f: f, maxBytes: 100}
+	for _, name := range []string{"rot-r1", "rot-r2", "rot-r3"} {
+		l.Log(Record{Agent: name, Mode: "api"})
+	}
+	l.Close()
+
+	cur, _ := os.ReadFile(path)
+	if strings.Contains(string(cur), "rot-r1") {
+		t.Fatalf("oldest generation should have rotated away: %s", cur)
+	}
+	if !strings.Contains(string(cur), "rot-r3") {
+		t.Fatalf("newest record missing from current log: %s", cur)
+	}
+	bak, err := os.ReadFile(path + ".1")
+	if err != nil {
+		t.Fatalf("rotated backup missing: %v", err)
+	}
+	if !strings.Contains(string(bak), "rot-r2") || strings.Contains(string(bak), "rot-r1") {
+		t.Fatalf("backup should hold exactly the middle generation: %s", bak)
+	}
+	aggs, err := Summarize(dir)
+	if err != nil || len(aggs) != 1 || aggs[0].Agent != "rot-r3" {
+		t.Fatalf("Summarize after rotation = %v, %v", aggs, err)
+	}
+}
+
+func TestLoggerNoRotationWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	l := New(dir) // production cap: 10MB — three records must not rotate
+	for i := 0; i < 3; i++ {
+		l.Log(Record{Agent: "keeper", Mode: "api"})
+	}
+	l.Close()
+	b, err := os.ReadFile(filepath.Join(dir, "usage.jsonl"))
+	if err != nil || !strings.Contains(string(b), "keeper") {
+		t.Fatalf("records lost: %v %s", err, b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "usage.jsonl.1")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected rotation at tiny size: %v", err)
+	}
+}
