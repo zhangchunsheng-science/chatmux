@@ -97,8 +97,23 @@ func (r *Runtime) persistSessions() {
 	go func() { _ = r.sessions.Save(r.dataDir) }()
 }
 
-// Shutdown persists state for a clean restart.
-func (r *Runtime) Shutdown() { r.persistSessions() }
+// Shutdown persists state for a clean restart. Synchronous, unlike the
+// per-turn async snapshots: the caller is about to exit.
+func (r *Runtime) Shutdown() {
+	if r.dataDir == "" {
+		r.dataDir = "data"
+	}
+	_ = r.sessions.Save(r.dataDir)
+}
+
+// Busy reports how many chat turns are in flight. Shutdown paths poll it
+// to let running turns finish (their usage records and session updates
+// land) before the process exits.
+func (r *Runtime) Busy() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.turns)
+}
 
 // SetSkills installs skill prompts (name → markdown body).
 func (r *Runtime) SetSkills(m map[string]string) { r.skills = m }

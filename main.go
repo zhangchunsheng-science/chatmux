@@ -612,7 +612,7 @@ func runServer(cfgPath string) int {
 					// clean stop, or it ran long enough to count as healthy
 					backoff = minChannelBackoff
 				}
-				if err != nil {
+				if err != nil && ctx.Err() == nil {
 					log.Printf("channel %s exited after %s: %v — restarting in %s",
 						c.Name(), ran.Round(time.Second), err, backoff)
 				}
@@ -641,6 +641,13 @@ func runServer(cfgPath string) int {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+	// drain in-flight turns (bounded): their usage records and session
+	// updates only land when the turn goroutine finishes
+	for deadline := time.Now().Add(8 * time.Second); rt.Busy() > 0 && time.Now().Before(deadline); {
+		time.Sleep(200 * time.Millisecond)
+	}
+	rt.Shutdown()
+	ul.Close()
 	return 0
 }
 

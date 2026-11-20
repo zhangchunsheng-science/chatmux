@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -942,5 +943,50 @@ func TestAttachImagesSizeCap(t *testing.T) {
 	}, &out)
 	if len(out.Images) != 1 {
 		t.Fatalf("small image must attach, got %d", len(out.Images))
+	}
+}
+
+func TestBusyAndShutdownDrain(t *testing.T) {
+	// Busy() must track in-flight turns so shutdown paths can drain them;
+	// Shutdown() snapshots sessions synchronously before exit.
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "helper", Provider: "openai"}},
+		DefaultAgent: "helper",
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&blockingProvider{})
+	dir := t.TempDir()
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	rt.dataDir = dir
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "慢任务"})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && rt.Busy() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if rt.Busy() != 1 {
+		t.Fatalf("want 1 in-flight turn, got %d", rt.Busy())
+	}
+	rt.mu.Lock()
+	t0 := rt.turns[key]
+	rt.mu.Unlock()
+	t0.cancel()
+	<-t0.done
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && rt.Busy() > 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if rt.Busy() != 0 {
+		t.Fatalf("turn finished but Busy() = %d", rt.Busy())
+	}
+
+	// Shutdown writes sessions.json synchronously: file exists on return
+	rt.sessions.Set(key, func(s *session.Session) { s.Title = "drain-check" })
+	rt.Shutdown()
+	if _, err := os.Stat(filepath.Join(dir, "sessions.json")); err != nil {
+		t.Fatalf("Shutdown did not snapshot sessions: %v", err)
 	}
 }
