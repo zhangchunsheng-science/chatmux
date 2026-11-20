@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 )
@@ -65,5 +67,42 @@ func TestNextBackoff(t *testing.T) {
 	// already at cap stays at cap
 	if got := nextBackoff(maxChannelBackoff); got != maxChannelBackoff {
 		t.Fatalf("cap not held: %s", got)
+	}
+}
+
+// TestReadmeDocumentsAllCommands guards docs drift: every command the
+// runtime dispatches on (case "/x" in agent.go) must appear in the
+// README 聊天内命令 table. New command → forgotten README row is now
+// a test failure, not a discovery for the reader.
+func TestReadmeDocumentsAllCommands(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("internal", "agent", "agent.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdRe := regexp.MustCompile(`case "(/[a-z]+)"`)
+	cmds := map[string]bool{}
+	for _, m := range cmdRe.FindAllStringSubmatch(string(src), -1) {
+		cmds[m[1]] = true
+	}
+	if len(cmds) < 20 { // sanity: the scan must find the dispatch table
+		t.Fatalf("scan found only %d commands — dispatch moved?", len(cmds))
+	}
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := readme
+	if i := bytes.Index(section, []byte("## 聊天内命令")); i >= 0 {
+		section = section[i:]
+		if j := bytes.Index(section[3:], []byte("\n## ")); j >= 0 {
+			section = section[:j+3]
+		}
+	} else {
+		t.Fatal("README 聊天内命令 section not found")
+	}
+	for cmd := range cmds {
+		if !bytes.Contains(section, []byte("`"+cmd)) {
+			t.Errorf("README 聊天内命令 table is missing %s", cmd)
+		}
 	}
 }
