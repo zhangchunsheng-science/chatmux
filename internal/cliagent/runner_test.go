@@ -2,7 +2,11 @@ package cliagent
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseClaudeEvents(t *testing.T) {
@@ -74,5 +78,48 @@ func TestResumeIDLifecycle(t *testing.T) {
 	r.setResumeID("a|b", "")
 	if got := r.ResumeID("a|b"); got != "" {
 		t.Fatalf("empty id should not overwrite, got %q", got)
+	}
+}
+
+func TestLegacyCliSessionsMigrate(t *testing.T) {
+	dir := t.TempDir()
+	// old format: plain anchor → id string
+	legacy := map[string]string{"feishu|c1": "sess-old"}
+	b, _ := json.Marshal(legacy)
+	if err := os.WriteFile(filepath.Join(dir, "cli-sessions.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRunner(dir)
+	if got := r.ResumeID("feishu|c1"); got != "sess-old" {
+		t.Fatalf("legacy id not restored: %q", got)
+	}
+	// new writes go out in the current format
+	r2 := NewRunner(dir) // re-loads whatever is on disk
+	if r2.ResumeID("feishu|c1") != "sess-old" {
+		t.Fatal("id lost across reload")
+	}
+}
+
+func TestCliSessionsCapped(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRunner(dir)
+	for i := 0; i < maxCliSessions+50; i++ {
+		r.mu.Lock()
+		r.sessions[fmt.Sprintf("feishu|c%04d", i)] = cliSess{
+			ID: fmt.Sprintf("s%d", i),
+			At: time.Now().Add(time.Duration(i) * time.Second), // later = fresher
+		}
+		r.mu.Unlock()
+	}
+	r.save()
+	r2 := NewRunner(dir)
+	if got := len(r2.sessions); got != maxCliSessions {
+		t.Fatalf("want cap %d, got %d", maxCliSessions, got)
+	}
+	if r2.ResumeID("feishu|c0000") != "" {
+		t.Fatal("stalest entry should have been evicted")
+	}
+	if r2.ResumeID(fmt.Sprintf("feishu|c%04d", maxCliSessions+49)) == "" {
+		t.Fatal("newest entry must survive")
 	}
 }

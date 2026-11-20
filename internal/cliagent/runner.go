@@ -13,8 +13,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Event is one incremental output from a running CLI agent.
@@ -26,35 +28,71 @@ type Event struct {
 	Err       error  `json:"-"`
 }
 
+// cliSess is one stored resume id plus its last-use stamp — the stamp
+// drives eviction when the map grows past maxCliSessions.
+type cliSess struct {
+	ID string    `json:"id"`
+	At time.Time `json:"at"`
+}
+
+// maxCliSessions caps the resume-id table: entries are tiny, but an
+// anchor per chat ever seen would otherwise grow without end.
+const maxCliSessions = 2000
+
 // Runner spawns one CLI process per turn (headless CLIs own their own
 // conversational memory via resume ids; chatmux tracks the ids).
 type Runner struct {
 	mu       sync.Mutex
-	sessions map[string]string // chatmux anchor key → CLI session id
-	persist  string            // cli-sessions.json path, "" = memory only
+	sessions map[string]cliSess // chatmux anchor key → CLI session id
+	persist  string             // cli-sessions.json path, "" = memory only
 }
 
-// NewRunner optionally restores resume ids persisted at dataDir.
+// NewRunner optionally restores resume ids persisted at dataDir. Reads
+// both the current {id, at} format and the legacy plain-string one.
 func NewRunner(dataDir ...string) *Runner {
-	r := &Runner{sessions: map[string]string{}}
+	r := &Runner{sessions: map[string]cliSess{}}
 	if len(dataDir) > 0 && dataDir[0] != "" {
 		r.persist = filepath.Join(dataDir[0], "cli-sessions.json")
 		if b, err := os.ReadFile(r.persist); err == nil {
-			var m map[string]string
+			var m map[string]cliSess
 			if json.Unmarshal(b, &m) == nil {
 				r.sessions = m
+			} else {
+				var legacy map[string]string
+				if json.Unmarshal(b, &legacy) == nil {
+					for k, id := range legacy {
+						r.sessions[k] = cliSess{ID: id}
+					}
+				}
 			}
 		}
 	}
 	return r
 }
 
-// save snapshots resume ids (atomic tmp+rename, best effort).
+// save snapshots resume ids (atomic tmp+rename, best effort), evicting
+// the stalest entries past the cap.
 func (r *Runner) save() {
 	if r.persist == "" {
 		return
 	}
+	r.mu.Lock()
+	if len(r.sessions) > maxCliSessions {
+		type stamp struct {
+			anchor string
+			at     time.Time
+		}
+		stamps := make([]stamp, 0, len(r.sessions))
+		for k, s := range r.sessions {
+			stamps = append(stamps, stamp{k, s.At})
+		}
+		sort.Slice(stamps, func(i, j int) bool { return stamps[i].at.Before(stamps[j].at) })
+		for _, st := range stamps[:len(stamps)-maxCliSessions] {
+			delete(r.sessions, st.anchor)
+		}
+	}
 	b, err := json.Marshal(r.sessions)
+	r.mu.Unlock()
 	if err != nil {
 		return
 	}
@@ -68,7 +106,7 @@ func (r *Runner) save() {
 func (r *Runner) ResumeID(anchor string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.sessions[anchor]
+	return r.sessions[anchor].ID
 }
 
 func (r *Runner) setResumeID(anchor, id string) {
@@ -76,7 +114,7 @@ func (r *Runner) setResumeID(anchor, id string) {
 		return
 	}
 	r.mu.Lock()
-	r.sessions[anchor] = id
+	r.sessions[anchor] = cliSess{ID: id, At: time.Now()}
 	r.mu.Unlock()
 	r.save()
 }
