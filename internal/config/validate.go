@@ -74,6 +74,16 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		ln.Close()
 	}
 
+	// admin-token probe: with an empty adminToken the guard on every
+	// /admin/* route passes everyone through — /admin/chat drives the
+	// agents (spending their API keys), /admin/stop kills the process,
+	// /admin/send speaks as the bot. On loopback that is a local
+	// convenience; on a wider bind it hands the gateway to anyone who
+	// can reach the port.
+	if cfg.HTTP.AdminToken == "" && !loopbackListen(cfg.HTTP.Listen) {
+		warn("http.adminToken is empty while listen %q is not loopback — /admin/* (chat/stop/send) would be open to anyone who can reach the port", cfg.HTTP.Listen)
+	}
+
 	agents := map[string]bool{}
 	for i, a := range cfg.Agents {
 		if a.Name == "" {
@@ -213,4 +223,19 @@ func probeWritable(dir string) error {
 		return fmt.Errorf("not writable: %v", err)
 	}
 	return os.Remove(probe)
+}
+
+// loopbackListen reports whether the listen address reaches loopback
+// only ("127.0.0.1:8080", "localhost:...", "[::1]:..."). An empty host
+// (":8080") or 0.0.0.0 covers every interface. Empty input counts as
+// loopback: Load defaults an unspecified listen to 127.0.0.1:8080.
+func loopbackListen(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		host = listen
+	}
+	if host == "" && listen == "" {
+		return true
+	}
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }

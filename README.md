@@ -355,7 +355,9 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   道/路由、cron 表达式、CLI 配置、重复名，未知 provider/通道类型给拼写
   建议）；拼写错的键名（`apikey`/`lisen` 这类被 JSON 解码器静默丢弃的）
   按路径点名并给近似建议；dataDir 不可写、模型 agent 无 apiKey 且对应
-  环境变量未设、监听端口已被占（双实例最常见的死法）预警但不阻启
+  环境变量未设、监听端口已被占（双实例最常见的死法）、adminToken 为空
+  且监听非回环（`/admin/*` 会向全网开放，chat 花的是你的 API key）预警
+  但不阻启
 
 ## 各平台接入要点
 
@@ -383,6 +385,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.50（对齐循环第 70 轮）：check 新增 admin 面预警——adminToken 为空
+且监听非回环地址时点名 `/admin/*`（chat/stop/send）将对所有能访问端口
+的调用者开放（chat 花的是你配的 API key）；回环或带 token 则静默。
+
 v0.6.49（对齐循环第 69 轮）：docwatch 行级 diff 重做——先跳公共前后缀
 （追加型文件近零成本），中段每侧头尾各 500 行封顶 + int32 DP，最坏
 ~4MB 瞬时内存替代旧 4001×4001 int 表（每次整体改写 ~128MB）；同时修
@@ -403,9 +409,5 @@ init→启动→问答→healthz 实测全通。
 v0.6.45（对齐循环第 65 轮）：check 最后一公里——监听端口占用预警
 （双实例死法启动前点名）+ 未知 provider/通道类型拼写建议（建议器提炼
 config.Suggest 共用）。
-
-v0.6.44（对齐循环第 64 轮）：healthz 降级点名坏通道——
-`degraded: slack, tg1` 直接进探测响应；纯函数化 + 假通道单测 +
-smoke 实例实测。
 
 MIT

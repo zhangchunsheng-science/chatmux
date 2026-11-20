@@ -258,3 +258,59 @@ func TestValidateUnknownProviderSuggests(t *testing.T) {
 		t.Fatalf("provider typo should suggest: %v", got)
 	}
 }
+
+func TestLoopbackListen(t *testing.T) {
+	for listen, want := range map[string]bool{
+		"127.0.0.1:8080": true,
+		"localhost:8080": true,
+		"[::1]:8080":     true,
+		"":               true, // Load defaults to 127.0.0.1:8080
+		":8080":          false,
+		"0.0.0.0:8080":   false,
+		"192.168.1.5:80": false,
+	} {
+		if got := loopbackListen(listen); got != want {
+			t.Errorf("loopbackListen(%q) = %v, want %v", listen, got, want)
+		}
+	}
+}
+
+// An empty adminToken on a non-loopback listener is an open gateway:
+// /admin/chat would spend the API keys, /admin/stop and /admin/send
+// are one HTTP call away for anyone on the network. check must name
+// that before boot — and stay silent when either condition lifts.
+func TestValidateOpenAdminWarns(t *testing.T) {
+	_, port, err := net.SplitHostPort(testListen(t))
+	if err != nil {
+		t.Skipf("no port: %v", err)
+	}
+	base := func(listen string) *Config {
+		return &Config{
+			HTTP:   HTTPConfig{Listen: listen},
+			Agents: []AgentConfig{{Name: "a", Provider: "openai", APIKey: "k"}},
+		}
+	}
+	for _, c := range []struct {
+		listen string
+		token  string
+		want   bool
+	}{
+		{"0.0.0.0:" + port, "", true},
+		{":" + port, "", true},
+		{"0.0.0.0:" + port, "t", false},
+		{"127.0.0.1:" + port, "", false},
+	} {
+		cfg := base(c.listen)
+		cfg.HTTP.AdminToken = c.token
+		_, warnings := Validate(cfg)
+		got := false
+		for _, w := range warnings {
+			if strings.Contains(w, "adminToken") {
+				got = true
+			}
+		}
+		if got != c.want {
+			t.Errorf("listen=%q token=%q: adminToken warning = %v, want %v (warnings: %v)", c.listen, c.token, got, c.want, warnings)
+		}
+	}
+}

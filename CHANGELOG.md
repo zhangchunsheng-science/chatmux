@@ -3,6 +3,16 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.50（对齐循环第 70 轮）
+
+check 新增 admin 面预警。空 adminToken 时 mountAdmin 的 guard 对所有
+/admin/* 放行——/admin/chat 驱动 agent（烧的是配置里的 API key）、
+/admin/stop 杀进程、/admin/send 冒充机器人发言；监听若非回环地址，
+这些能力对全网开放且启动前无任何提示。现在 check 在 adminToken 为空
+且监听非回环（":8080"/0.0.0.0/具体网卡 IP）时点名风险，回环监听或设
+了 token 则保持静默（本地便利不该刷警告）。loopbackListen 纯函数 +
+四象限（地址×token）单测覆盖。
+
 ## v0.6.49（对齐循环第 69 轮）
 
 docwatch 行级 diff 的成本与正确性双修。旧实现"每侧只留末 4000 行 + int
