@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -37,18 +37,35 @@ jobs:
           [ "${{ matrix.goos }}" = windows ] && ext=".exe"
           if [ "${{ matrix.goos }}" = windows ]; then
             zip "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
-            sha256sum "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.zip" > "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.zip.sha256"
           else
             tar czf "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
-            sha256sum "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" > "chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256"
           fi
-      # Re-publish safety: if this tag's release already has assets (a
-      # re-tag or workflow re-run), the release action would skip
-      # same-named uploads and leave a mix of builds — which the
-      # updater's checksum verification then (correctly) refuses.
-      # Clear them so every upload below is one consistent set.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.*
+
+  # One uploader, no matrix races: every archive and its sidecar is
+  # computed and published in a single pass, and any assets from a
+  # previous publish of this tag are cleared first so a re-run can
+  # never leave a mix of builds (which the updater's checksum
+  # verification would correctly refuse).
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      - name: checksums
+        run: |
+          cd dist
+          for f in chatmux-linux-* chatmux-darwin-* chatmux-windows-*; do
+            sha256sum "$f" > "$f.sha256"
+          done
       - name: clear stale release assets
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -66,4 +83,4 @@ jobs:
           fi
       - uses: softprops/action-gh-release@v2
         with:
-          files: chatmux-${{ matrix.goos }}-${{ matrix.goarch }}.*
+          files: dist/chatmux-*

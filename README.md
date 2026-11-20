@@ -371,6 +371,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.33（第 53 轮补丁二）：发布流水线重构——矩阵只构建，单个 release
+job 统一算校验和、清旧产物、一次性上传（v0.6.32 把清空放进每个矩阵 job，
+并行互清只剩一对产物，实测暴露后重构）。
+
 v0.6.32（第 53 轮补丁）：发布流水线资产清空——重跑/重打 tag 先清该 tag
 已有产物再上传，杜绝新旧混合集（v0.6.31 实测踩中：强推 amend 后两次
 构建不同字节，updater 校验当场拒装——校验按设计工作）。
@@ -390,14 +394,6 @@ v0.6.29（对齐循环第 51 轮）：README 瘦身——逐轮记录移入 CHAN
 v0.6.28（对齐循环第 50 轮）：冒烟进 CI——`ci.yml` 在 vet+test+build 之后
 跑 `scripts/smoke.sh`：从"本地手动验证过一次"变成"每次 push 都端到端回
 归"，成功轮/失败轮/记账面/优雅停机任何一环退化都会挡住合并。
-
-v0.6.27（对齐循环第 49 轮）：`scripts/smoke.sh`——端到端冒烟脚本入库：
-临时目录起一套独立实例，零凭据零外网跑通完整对话（generic CLI agent 挂
-/bin/echo 验证成功轮 + openai agent 指向死端口验证失败轮），并核对全部
-记账面：网页聊天日志、usage.jsonl 错误记录、`chatmux_usage_errors_total`
-指标、daemon turn 日志、TERM 优雅退出；中途顺带跑 `chatmux check`。配
-套修复：channels[] 为空不再是启动硬错误（web 控制台通道本就无条件挂载，
-零 IM 通道 = 纯网关实例，check 降为提示）。
 更早轮次（v0.1 → v0.6.22，对齐循环第 1–44 轮）见
 [CHANGELOG.md](CHANGELOG.md)。
 
