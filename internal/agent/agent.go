@@ -437,8 +437,12 @@ func (r *Runtime) dispatchCommand(key session.Key, msg channel.Message, a *confi
 			if a.Errors > 0 {
 				errs = " · " + strconv.Itoa(a.Errors) + " 失败"
 			}
-			lines = append(lines, fmt.Sprintf("· %s — %d 次%s · ↑%d ↓%d tokens%s",
-				firstNonEmpty(a.Agent, "(未知)"), a.Calls, errs, a.InputTokens, a.OutputTokens, fb))
+			avg := ""
+			if a.AvgMs > 0 {
+				avg = " · ⏱" + fmtDur(a.AvgMs)
+			}
+			lines = append(lines, fmt.Sprintf("· %s — %d 次%s · ↑%d ↓%d tokens%s%s",
+				firstNonEmpty(a.Agent, "(未知)"), a.Calls, errs, a.InputTokens, a.OutputTokens, avg, fb))
 		}
 		reply(strings.Join(lines, "\n"))
 	case "/dash":

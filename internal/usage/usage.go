@@ -77,11 +77,14 @@ type Agg struct {
 	Agent        string `json:"agent"`
 	Calls        int    `json:"calls"`
 	Errors       int    `json:"errors"` // subset of Calls that failed
+	AvgMs        int64  `json:"avgMs"`  // mean DurationMs over Calls
 	InputTokens  int64  `json:"inputTokens"`
 	OutputTokens int64  `json:"outputTokens"`
 	OutputChars  int64  `json:"outputChars"`
 	FeedbackUp   int    `json:"feedbackUp"`
 	FeedbackDown int    `json:"feedbackDown"`
+
+	durationTotal int64 // internal; folded into AvgMs on output
 }
 
 // Summarize aggregates usage.jsonl by agent. feedback rows (Mode
@@ -146,12 +149,16 @@ func SummarizeSince(dataDir string, since time.Time) ([]Agg, error) {
 		if rec.Error != "" {
 			a.Errors++
 		}
+		a.durationTotal += rec.DurationMs
 		a.InputTokens += int64(rec.InputTokens)
 		a.OutputTokens += int64(rec.OutputTokens)
 		a.OutputChars += int64(rec.OutputChars)
 	}
 	out := make([]Agg, 0, len(byAgent))
 	for _, a := range byAgent {
+		if a.Calls > 0 {
+			a.AvgMs = a.durationTotal / int64(a.Calls)
+		}
 		out = append(out, *a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Calls > out[j].Calls })

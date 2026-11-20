@@ -90,3 +90,18 @@ func TestSummarizeErrors(t *testing.T) {
 		t.Fatalf("want 2 calls 1 error, got %+v", aggs[0])
 	}
 }
+
+func TestSummarizeAvgMs(t *testing.T) {
+	dir := t.TempDir()
+	l := New(dir)
+	l.Log(Record{Agent: "a", Mode: "api", DurationMs: 300})
+	l.Log(Record{Agent: "a", Mode: "api", DurationMs: 700})
+	l.Close()
+	aggs, err := Summarize(dir)
+	if err != nil || len(aggs) != 1 {
+		t.Fatalf("aggs: %v %v", aggs, err)
+	}
+	if aggs[0].AvgMs != 500 {
+		t.Fatalf("avg = %d, want 500", aggs[0].AvgMs)
+	}
+}

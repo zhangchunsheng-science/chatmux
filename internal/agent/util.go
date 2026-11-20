@@ -4,8 +4,10 @@ package agent
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
 )
@@ -63,4 +65,16 @@ func errStr(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// fmtDur renders milliseconds compactly for /insight lines.
+func fmtDur(ms int64) string {
+	switch {
+	case ms < 1000:
+		return strconv.FormatInt(ms, 10) + "ms"
+	case ms < 60_000:
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	default:
+		return fmt.Sprintf("%dm%ds", ms/60_000, (ms%60_000)/1000)
+	}
 }

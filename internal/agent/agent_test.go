@@ -891,3 +891,15 @@ func TestRunOnceAccounting(t *testing.T) {
 		})
 	}
 }
+
+func TestFmtDur(t *testing.T) {
+	if got := fmtDur(340); got != "340ms" {
+		t.Errorf("340 → %s", got)
+	}
+	if got := fmtDur(1520); got != "1.5s" {
+		t.Errorf("1520 → %s", got)
+	}
+	if got := fmtDur(125_000); got != "2m5s" {
+		t.Errorf("125000 → %s", got)
+	}
+}

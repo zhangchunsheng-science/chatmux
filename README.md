@@ -362,6 +362,11 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.11（对齐循环第 32 轮）：/insight 平均时延——每条 usage 记录早已存
+DurationMs 但从未展示；Agg 增加 avgMs（均值），/insight 行追加 ⏱340ms/
+⏱1.5s/⏱2m5s 三档格式。顺带排查确认会话持久化每轮落盘（finish →
+persistSessions），崩溃安全无缺口。
+
 v0.6.10（对齐循环第 31 轮）：配置文档补全——config 结构体字段与
 chatmux.json.example 程序化比对，补三个未文档化字段：路由 userId（按用户
 过滤唤起 agent）、cron/docwatch 的 threadId（话题群定向）；三者均已逐一
