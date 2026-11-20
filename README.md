@@ -357,10 +357,20 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - 飞书 webhook 模式实现 sha256(timestamp+nonce+encryptKey+body) 验签 + ±1h 时间窗
 - 企业微信回调按官方 AES-256-CBC + SHA1 签名规范，任何不匹配直接 403
 - 会话去重存储与状态文件落在 `dataDir`（默认 `data/`），权限 0600
-- 图片下载：飞书按 image_key 走 im 资源接口、Telegram 走 getFile，落到
-  `dataDir/attachments/` 后以本地文件喂给视觉模型
+- 图片下载：飞书按 image_key 走 im 资源接口、Telegram 走 getFile、Slack
+  带 bot token 拉 url_private、Discord 直接用公开 CDN URL，落到
+  `dataDir/attachments/` 后以本地文件喂给视觉模型。已知边界：企微
+  image 用公开 pic_url，文件/语音 media_id 暂无下载（丢弃并记日志）；
+  钉钉 Stream 消息暂不解析附件
 
 ## 状态
+
+v0.6.19（对齐循环第 41 轮）：Slack 图片修复——url_private 需要 bot token
+才能取，原来直接把裸 URL 喂给视觉模型（只能拿到登录页）。Slack 实现
+AttachmentDownloader 带 Bearer 下载，attachImages 改为"有下载器的通道
+连 URL 附件也自己下"（下载失败回退裸 URL，公开 CDN 行为不变）。slack
+包测试从 0 到 1。企微文件/语音（media_id 无下载器）与钉钉（不支持附件）
+为已知边界，README 能力表照实标注。
 
 v0.6.18（对齐循环第 40 轮）：turn 看门狗——turn 上下文原来无期限，CLI
 子进程挂死会永远占住会话（API 路径仅靠 HTTP 超时兜底）。现在每 turn 有

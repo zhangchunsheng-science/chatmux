@@ -413,6 +413,37 @@ func (s *Slack) SenderFor(msg channel.Message) (channel.Sender, error) {
 	return &Sender{s: s, chatID: msg.ChatID}, nil
 }
 
+// Download implements channel.AttachmentDownloader: url_private files
+// require the bot token — handing the raw URL to a vision provider only
+// gets it a login page.
+func (s *Slack) Download(ctx context.Context, att channel.Attachment) ([]byte, string, error) {
+	if att.URL == "" {
+		return nil, "", fmt.Errorf("slack: attachment has no url")
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", att.URL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.opts.BotToken)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("slack file download: %s", resp.Status)
+	}
+	data, err := channel.ReadCapped(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" || mime == "application/octet-stream" {
+		mime = http.DetectContentType(data)
+	}
+	return data, mime, nil
+}
+
 func (s *Sender) Send(ctx context.Context, text string, opts channel.SendOptions) (string, error) {
 	body := map[string]any{"channel": s.chatID, "text": text}
 	if opts.ReplyTo != "" {

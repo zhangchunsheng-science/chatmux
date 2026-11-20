@@ -1060,3 +1060,43 @@ func TestTurnWatchdogUnblocksChat(t *testing.T) {
 	}
 	t.Fatal("watchdog-cancelled turn was not recorded in usage")
 }
+
+func TestAttachImagesDownloaderOwnsURL(t *testing.T) {
+	// a channel with a downloader owns its URLs (slack url_private needs
+	// auth): the attachment must land as a local file, not the raw URL
+	rt, key := testRuntime()
+	rt.dataDir = t.TempDir()
+	s := &fakeSender{}
+	dl := &dlChannel{stubChannel: stubChannel{sender: s}, data: []byte("imgdata")}
+	rt.chans["feishu"] = dl
+	msg := channel.Message{Channel: "feishu", ChatID: key.ChatID, UserID: "u1", Text: "看图",
+		Attachments: []channel.Attachment{{Type: "image", URL: "https://files.example/f.png"}}}
+	out := provider.Msg{Role: provider.User, Content: msg.Text}
+	rt.attachImages(context.Background(), msg, &out)
+	if len(out.Images) != 1 || out.Images[0] == msg.Attachments[0].URL {
+		t.Fatalf("want downloaded local path, got %v", out.Images)
+	}
+	if _, err := os.Stat(out.Images[0]); err != nil {
+		t.Fatalf("downloaded file missing: %v", err)
+	}
+}
+
+func TestAttachImagesURLFallbackOnDownloadError(t *testing.T) {
+	// downloader fails → the URL still goes to the provider as-is
+	rt, key := testRuntime()
+	s := &fakeSender{}
+	rt.chans["feishu"] = &errDlChannel{stubChannel: stubChannel{sender: s}}
+	msg := channel.Message{Channel: "feishu", ChatID: key.ChatID, UserID: "u1", Text: "看图",
+		Attachments: []channel.Attachment{{Type: "image", URL: "https://cdn.example/pub.png"}}}
+	out := provider.Msg{Role: provider.User, Content: msg.Text}
+	rt.attachImages(context.Background(), msg, &out)
+	if len(out.Images) != 1 || out.Images[0] != "https://cdn.example/pub.png" {
+		t.Fatalf("want URL fallback, got %v", out.Images)
+	}
+}
+
+type errDlChannel struct{ stubChannel }
+
+func (d *errDlChannel) Download(_ context.Context, _ channel.Attachment) ([]byte, string, error) {
+	return nil, "", fmt.Errorf("boom")
+}

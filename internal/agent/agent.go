@@ -1107,25 +1107,30 @@ func (r *Runtime) attachImages(ctx context.Context, msg channel.Message, out *pr
 		switch {
 		case att.Path != "":
 			out.Images = append(out.Images, att.Path)
-		case att.URL != "":
-			out.Images = append(out.Images, att.URL)
-		case att.Key != "" && dl != nil:
+		case dl != nil && (att.Key != "" || att.URL != ""):
+			// channels with a downloader own their URLs too: slack's
+			// url_private needs the bot token, the raw URL would only
+			// serve a login page to the vision provider
 			data, mime, err := dl.Download(ctx, att)
-			if err != nil || len(data) == 0 {
-				if err != nil {
-					log.Printf("attachment skip: %s/%s image download failed: %v", msg.Channel, msg.ChatID, err)
+			if err == nil && len(data) > 0 && len(data) <= channel.MaxAttachmentBytes {
+				p := filepath.Join(r.dataDir, "attachments", hashOf(firstNonEmpty(att.Key, att.URL))+"."+extOf(mime))
+				if saveFile(p, data) == nil {
+					out.Images = append(out.Images, p)
+					continue
 				}
-				continue
 			}
-			if len(data) > channel.MaxAttachmentBytes {
+			if err != nil {
+				log.Printf("attachment skip: %s/%s image download failed: %v", msg.Channel, msg.ChatID, err)
+			} else if len(data) > channel.MaxAttachmentBytes {
 				log.Printf("attachment skip: %s/%s image %.1fMB over cap %dMB",
 					msg.Channel, msg.ChatID, float64(len(data))/(1<<20), channel.MaxAttachmentBytes>>20)
-				continue
 			}
-			p := filepath.Join(r.dataDir, "attachments", hashOf(att.Key)+"."+extOf(mime))
-			if saveFile(p, data) == nil {
-				out.Images = append(out.Images, p)
+			// download failed but the URL is public? hand it over as-is
+			if att.URL != "" {
+				out.Images = append(out.Images, att.URL)
 			}
+		case att.URL != "":
+			out.Images = append(out.Images, att.URL)
 		}
 	}
 }
