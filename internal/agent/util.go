@@ -78,3 +78,8 @@ func fmtDur(ms int64) string {
 		return fmt.Sprintf("%dm%ds", ms/60_000, (ms%60_000)/1000)
 	}
 }
+
+// maxAttachmentBytes caps one downloaded attachment (image/audio): larger
+// files are skipped rather than slurped to disk and sent to the vision or
+// transcription API.
+const maxAttachmentBytes = 20 << 20

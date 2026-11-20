@@ -903,3 +903,44 @@ func TestFmtDur(t *testing.T) {
 		t.Errorf("125000 → %s", got)
 	}
 }
+
+type dlChannel struct {
+	stubChannel
+	data []byte
+}
+
+func (d *dlChannel) Download(_ context.Context, _ channel.Attachment) ([]byte, string, error) {
+	return d.data, "image/png", nil
+}
+
+func TestAttachImagesSizeCap(t *testing.T) {
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent: "default", DataDir: t.TempDir(),
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&echoProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	big := &dlChannel{stubChannel: stubChannel{sender: s}, data: make([]byte, maxAttachmentBytes+1)}
+	rt.chans["feishu"] = big
+
+	var out provider.Msg
+	rt.attachImages(context.Background(), channel.Message{
+		Channel: "feishu", ChatID: "c1",
+		Attachments: []channel.Attachment{{Type: "image", Key: "img_x"}},
+	}, &out)
+	if len(out.Images) != 0 {
+		t.Fatalf("oversized image must be skipped, got %d", len(out.Images))
+	}
+	// under the cap passes
+	big.data = make([]byte, 1024)
+	out = provider.Msg{}
+	rt.attachImages(context.Background(), channel.Message{
+		Channel: "feishu", ChatID: "c1",
+		Attachments: []channel.Attachment{{Type: "image", Key: "img_y"}},
+	}, &out)
+	if len(out.Images) != 1 {
+		t.Fatalf("small image must attach, got %d", len(out.Images))
+	}
+}

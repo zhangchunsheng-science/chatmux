@@ -856,6 +856,11 @@ func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) stri
 		if err != nil || len(data) == 0 {
 			continue
 		}
+		if len(data) > maxAttachmentBytes {
+			log.Printf("attachment skip: %s/%s audio %.1fMB over cap %dMB",
+				msg.Channel, msg.ChatID, float64(len(data))/(1<<20), maxAttachmentBytes>>20)
+			continue
+		}
 		p := filepath.Join(r.dataDir, "attachments", hashOf(att.Key)+"."+extOf(mime))
 		if saveFile(p, data) != nil {
 			continue
@@ -1032,6 +1037,11 @@ func (r *Runtime) attachImages(ctx context.Context, msg channel.Message, out *pr
 		case att.Key != "" && dl != nil:
 			data, mime, err := dl.Download(ctx, att)
 			if err != nil || len(data) == 0 {
+				continue
+			}
+			if len(data) > maxAttachmentBytes {
+				log.Printf("attachment skip: %s/%s image %.1fMB over cap %dMB",
+					msg.Channel, msg.ChatID, float64(len(data))/(1<<20), maxAttachmentBytes>>20)
 				continue
 			}
 			p := filepath.Join(r.dataDir, "attachments", hashOf(att.Key)+"."+extOf(mime))
