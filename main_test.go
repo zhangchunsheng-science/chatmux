@@ -300,3 +300,34 @@ func TestMetricsRendersAllSeries(t *testing.T) {
 		}
 	}
 }
+
+// stubChan is a config-free channel for handler-level tests.
+type stubChan struct {
+	name    string
+	healthy bool
+}
+
+func (s *stubChan) Name() string { return s.name }
+func (s *stubChan) Start(ctx context.Context, _ chan<- channel.Message) error {
+	<-ctx.Done()
+	return nil
+}
+func (s *stubChan) SenderFor(channel.Message) (channel.Sender, error) {
+	return nil, errors.New("n/a")
+}
+func (s *stubChan) Healthy() bool { return s.healthy }
+
+func TestHealthzBody(t *testing.T) {
+	if code, body := healthzBody(map[string]channel.Channel{}); code != 200 || body != "ok" {
+		t.Fatalf("no channels: %d %q", code, body)
+	}
+	all := map[string]channel.Channel{
+		"feishu": &stubChan{name: "feishu", healthy: true},
+		"tg1":    &stubChan{name: "tg1", healthy: false},
+		"slack":  &stubChan{name: "slack", healthy: false},
+	}
+	code, body := healthzBody(all)
+	if code != 503 || body != "degraded: slack, tg1" {
+		t.Fatalf("degraded body = %d %q, want 503 %q (sorted, named)", code, body, "degraded: slack, tg1")
+	}
+}

@@ -322,7 +322,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 运维接口
 
-- `GET /healthz` — 存活/降级探测（任一通道断开即 503）；通道适配器 panic
+- `GET /healthz` — 存活/降级探测（任一通道断开即 503，降级时点名坏通道：
+  `degraded: slack, tg1`）；通道适配器 panic
   被转为错误走指数退避重连，turn/bg 任务 panic 被 recover 并清理登记——
   单点崩溃不再带走整个进程
 - `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
@@ -378,6 +379,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.44（对齐循环第 64 轮）：healthz 降级点名坏通道——
+`degraded: slack, tg1` 直接进探测响应；纯函数化 + 假通道单测 +
+smoke 实例实测。
+
 v0.6.43（对齐循环第 63 轮）：/metrics 渲染守护——源码提取全部
 chatmux_* 指标族逐个断言活体输出在列，静默丢序列变测试失败；附 fd
 泄漏审计（20 处 HTTP 调用点全干净）。
@@ -396,9 +401,5 @@ JSON 解码器静默丢弃的拼写错误键（apikey/lisen 类）并给近似�
 v0.6.39（对齐循环第 59 轮）：chatmux check 密钥预警——模型 agent 无
 apiKey 且环境变量未设（运行时必 401）启动前警告；README 补「配置体检」
 条目。
-
-v0.6.38（对齐循环第 58 轮）：admin 路由鉴权守护——全部 /admin/* 路由
-无 token 一律 401 的守护测试；首跑抓到三个 handler 方法检查先于鉴权
-（405 泄漏路由语义），已修。
 
 MIT

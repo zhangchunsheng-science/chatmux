@@ -3,6 +3,14 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.44（对齐循环第 64 轮）
+
+healthz 降级点名——/healthz 降级时原来只有一句 "degraded"，现在点名坏
+通道（按名排序）：`degraded: slack, tg1`。凌晨监控报警时"是哪个"是第一
+个问题，答案现在就在探测响应里。渲染提取为 healthzBody 纯函数，
+stubChan 假通道单测（零通道 200 ok / 两坏通道 503 排序点名），
+/tmp/cm-smoke 实测假 token 通道被点名。
+
 ## v0.6.43（对齐循环第 63 轮）
 
 /metrics 渲染守护——TestMetricsRendersAllSeries 从 main.go 源码提取全部

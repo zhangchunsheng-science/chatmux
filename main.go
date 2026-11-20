@@ -470,18 +470,11 @@ func runServer(cfgPath string) int {
 	chans := map[string]channel.Channel{}
 	var mux http.ServeMux
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		ok := true
-		for _, ch := range chans {
-			if !ch.Healthy() {
-				ok = false
-			}
+		code, body := healthzBody(chans)
+		if code != http.StatusOK {
+			w.WriteHeader(code)
 		}
-		if !ok {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("degraded"))
-			return
-		}
-		_, _ = w.Write([]byte("ok"))
+		_, _ = w.Write([]byte(body))
 	})
 	for _, cc := range cfg.Channels {
 		f, ok := factories[cc.Type]
@@ -677,6 +670,24 @@ func runServer(cfgPath string) int {
 	rt.Shutdown()
 	ul.Close()
 	return 0
+}
+
+// healthzBody renders the liveness probe: 200 "ok" when every channel
+// transport reports healthy, otherwise 503 naming the broken channels
+// in sorted order — when a monitor pages at 3am, "which one" is the
+// first question.
+func healthzBody(chans map[string]channel.Channel) (int, string) {
+	var down []string
+	for name, ch := range chans {
+		if !ch.Healthy() {
+			down = append(down, name)
+		}
+	}
+	if len(down) == 0 {
+		return http.StatusOK, "ok"
+	}
+	sort.Strings(down)
+	return http.StatusServiceUnavailable, "degraded: " + strings.Join(down, ", ")
 }
 
 // superviseChannel runs one channel adapter forever: restart with
