@@ -79,7 +79,7 @@ func fmtDur(ms int64) string {
 	}
 }
 
-// maxAttachmentBytes caps one downloaded attachment (image/audio): larger
-// files are skipped rather than slurped to disk and sent to the vision or
-// transcription API.
-const maxAttachmentBytes = 20 << 20
+// Attachment size caps live in the channel package
+// (channel.MaxAttachmentBytes): downloaders reject over-cap payloads at the
+// HTTP layer, and the runtime-side checks below are belt-and-braces for
+// channels that do not stream-cap yet.

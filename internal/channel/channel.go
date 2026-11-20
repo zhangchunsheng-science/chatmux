@@ -8,6 +8,8 @@ package channel
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -118,4 +120,25 @@ type HTTPMounter interface {
 type AttachmentDownloader interface {
 	// Download fetches one attachment's bytes; returns mime type.
 	Download(ctx context.Context, att Attachment) (data []byte, mime string, err error)
+}
+
+// MaxAttachmentBytes caps one downloaded attachment (image/audio) across
+// channels. Downloads over the cap fail rather than truncate: a silently
+// truncated image or clip turns into garbage downstream (corrupt vision
+// input, half a speech recording) — worse than a clear error.
+const MaxAttachmentBytes = 20 << 20
+
+// ReadCapped returns all of r's bytes, refusing payloads larger than
+// MaxAttachmentBytes. io.LimitReader alone would truncate them instead.
+func ReadCapped(r io.Reader) ([]byte, error) { return readCapped(r, MaxAttachmentBytes) }
+
+func readCapped(r io.Reader, limit int) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > limit {
+		return nil, fmt.Errorf("attachment over %dMB cap", limit>>20)
+	}
+	return b, nil
 }

@@ -215,7 +215,8 @@ func (a *api) uploadFile(ctx context.Context, path string, isImage bool) (string
 }
 
 // download fetches a binary resource (im/v1/images/:key) and returns the
-// raw bytes plus the Content-Type.
+// raw bytes plus the Content-Type. Payloads over channel.MaxAttachmentBytes
+// fail instead of being silently truncated.
 func (a *api) download(ctx context.Context, path string) ([]byte, string, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", a.base+path, nil)
 	tok, err := a.tenantToken(ctx)
@@ -228,9 +229,13 @@ func (a *api) download(ctx context.Context, path string) ([]byte, string, error)
 		return nil, "", err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return nil, "", fmt.Errorf("feishu %s: %s %s", path, resp.Status, truncate(string(b), 300))
+	}
+	b, err := channel.ReadCapped(resp.Body)
+	if err != nil {
+		return nil, "", err
 	}
 	return b, resp.Header.Get("Content-Type"), nil
 }

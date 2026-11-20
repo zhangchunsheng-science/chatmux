@@ -416,9 +416,14 @@ func (t *Telegram) Download(ctx context.Context, att channel.Attachment) ([]byte
 		return nil, "", err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("telegram file download: %s", resp.Status)
+	}
+	// over-cap files fail outright; truncating them would corrupt the
+	// image or clip downstream
+	data, err := channel.ReadCapped(resp.Body)
+	if err != nil {
+		return nil, "", err
 	}
 	mime := resp.Header.Get("Content-Type")
 	if mime == "" || mime == "application/octet-stream" {

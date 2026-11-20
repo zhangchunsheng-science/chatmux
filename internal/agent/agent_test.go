@@ -922,7 +922,7 @@ func TestAttachImagesSizeCap(t *testing.T) {
 	reg.Register(&echoProvider{})
 	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
 	s := &fakeSender{}
-	big := &dlChannel{stubChannel: stubChannel{sender: s}, data: make([]byte, maxAttachmentBytes+1)}
+	big := &dlChannel{stubChannel: stubChannel{sender: s}, data: make([]byte, channel.MaxAttachmentBytes+1)}
 	rt.chans["feishu"] = big
 
 	var out provider.Msg
