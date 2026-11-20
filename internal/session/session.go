@@ -55,6 +55,38 @@ type Session struct {
 // maxHistory bounds stored turns per chat (user+assistant pairs).
 const maxHistory = 40
 
+// Byte caps: count alone doesn't bound the store — one pasted dump can
+// be megabytes, and the whole sessions.json re-marshals on every save.
+// maxStoredMessageBytes caps a single message (head+tail preserved);
+// maxSessionBytes caps one session's history at ~5× the replay
+// character budget, so anything replay could never use is dropped
+// before it becomes dead weight in memory and on disk.
+const (
+	maxStoredMessageBytes = 64 << 10
+	maxSessionBytes       = 400 << 10
+)
+
+// capMessage truncates an over-long message body, keeping head and
+// tail (the tail is where replies and code land).
+func capMessage(m provider.Msg) provider.Msg {
+	if len(m.Content) <= maxStoredMessageBytes {
+		return m
+	}
+	const keep = 16 << 10
+	head := maxStoredMessageBytes - keep
+	m.Content = m.Content[:head] + "\n…[消息超长，已截断]…\n" + m.Content[len(m.Content)-keep:]
+	return m
+}
+
+// sessionBytes is the total stored body size of a history slice.
+func sessionBytes(h []provider.Msg) int {
+	n := 0
+	for _, m := range h {
+		n += len(m.Content)
+	}
+	return n
+}
+
 // Store is a concurrency-safe session map.
 type Store struct {
 	mu    sync.Mutex
@@ -90,9 +122,14 @@ func (s *Store) Append(k Key, user, assistant provider.Msg) {
 	sess := s.Get(k)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess.History = append(sess.History, user, assistant)
+	sess.History = append(sess.History, capMessage(user), capMessage(assistant))
 	if n := len(sess.History); n > maxHistory {
 		sess.History = sess.History[n-maxHistory:]
+	}
+	// byte budget: drop the oldest pair while over cap, always keeping
+	// the latest pair
+	for sessionBytes(sess.History) > maxSessionBytes && len(sess.History) > 2 {
+		sess.History = sess.History[2:]
 	}
 	sess.LastUsed = time.Now()
 }

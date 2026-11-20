@@ -371,6 +371,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.36（对齐循环第 56 轮）：会话存储字节封顶——单条消息 64KB（保头保
+尾）、单会话 400KB（约为回放预算 5 倍，超则丢最旧对）；贴大文档不再撑
+爆内存与每轮 Save 的全量重编。附全包 -race/-count=2 审计绿。
+
 v0.6.35（对齐循环第 55 轮）：chatmux check 二次打磨——修 "web" 通道被
 冤报未知通道路由的误报；补 dataDir 可写探测（不可写时 usage 记账静默丢
 失，check 预先警告）。
@@ -389,11 +393,6 @@ v0.6.32（第 53 轮补丁）：发布流水线资产清空——重跑/重打 t
 
 v0.6.31（对齐循环第 53 轮）：自更新下载校验——release 每产物附 .sha256
 边车，update 先比对再替换，不匹配拒装；旧 release 无边车跳过校验。
-
-v0.6.30（对齐循环第 52 轮）：韧性事件上指标——看门狗触发数
-（chatmux_turn_watchdog_fires_total）与流启动重试数
-（chatmux_stream_retries_total）进 /metrics，此前只有 daemon 日志可
-见；internal/metrics 原子计数包，冒烟死端口轮断言重试计数。
 更早轮次（v0.1 → v0.6.22，对齐循环第 1–44 轮）见
 [CHANGELOG.md](CHANGELOG.md)。
 
