@@ -69,6 +69,24 @@ func TestValidateDocwatchPathIsWarning(t *testing.T) {
 	}
 }
 
+func TestValidateNoChannelsIsWarning(t *testing.T) {
+	// The web console channel is always attached at boot, so a config
+	// with zero IM channels is a valid gateway-only setup: warning, not
+	// a boot-blocking problem.
+	cfg := &Config{
+		Agents:       []AgentConfig{{Name: "a", Provider: "openai"}},
+		DefaultAgent: "a",
+		HTTP:         HTTPConfig{Listen: ":8080"},
+	}
+	problems, warnings := Validate(cfg)
+	if len(problems) != 0 {
+		t.Fatalf("zero channels must not be a problem, got %v", problems)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "web-console") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
 func mustProblems(t *testing.T, cfg *Config) []string {
 	t.Helper()
 	p, _ := Validate(cfg)

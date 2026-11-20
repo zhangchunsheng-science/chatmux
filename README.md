@@ -338,6 +338,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - **launchd**：`deploy/launchd/com.zhangchunsheng.chatmux.plist`
 - **CI/发布**：push 跑 vet+test+build；打 `v*` tag 自动交叉编译
   linux/darwin/windows × amd64/arm64 并挂到 GitHub Release
+- **冒烟**：`scripts/smoke.sh`——本地端到端（构建→check→起实例→成功轮
+  +失败轮→记账核对→优雅停机），零凭据零外网
 
 ## 各平台接入要点
 
@@ -364,6 +366,14 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   企微/钉钉语音同样取回后送转写
 
 ## 状态
+
+v0.6.27（对齐循环第 49 轮）：`scripts/smoke.sh`——端到端冒烟脚本入库：
+临时目录起一套独立实例，零凭据零外网跑通完整对话（generic CLI agent 挂
+/bin/echo 验证成功轮 + openai agent 指向死端口验证失败轮），并核对全部
+记账面：网页聊天日志、usage.jsonl 错误记录、`chatmux_usage_errors_total`
+指标、daemon turn 日志、TERM 优雅退出；中途顺带跑 `chatmux check`。配
+套修复：channels[] 为空不再是启动硬错误（web 控制台通道本就无条件挂载，
+零 IM 通道 = 纯网关实例，check 降为提示）。
 
 v0.6.26（对齐循环第 48 轮）：模型流启动失败自动重试一次——连接抖动、瞬
 时 5xx 这类 blip 原来直接变成用户可见的失败；启动阶段还没有任何输出，

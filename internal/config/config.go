@@ -209,9 +209,9 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) validate() error {
-	if len(c.Channels) == 0 {
-		return fmt.Errorf("config: no channels configured")
-	}
+	// No channels[] is fine: the web console channel is attached
+	// unconditionally at boot, so such a config runs as a pure
+	// dashboard/gateway instance.
 	seen := map[string]bool{}
 	for _, ch := range c.Channels {
 		if seen[ch.Name] {

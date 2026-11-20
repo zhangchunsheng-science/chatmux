@@ -41,6 +41,9 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		}
 		channels[name] = true
 	}
+	if len(cfg.Channels) == 0 {
+		warn("channels: none configured — running as a web-console gateway (dashboard chat, admin API, MCP)")
+	}
 
 	agents := map[string]bool{}
 	for i, a := range cfg.Agents {
