@@ -1206,3 +1206,95 @@ func TestStreamRetryCancelledDuringBackoff(t *testing.T) {
 		t.Fatalf("second attempt should not run after cancel, calls=%d", fp.calls)
 	}
 }
+
+type panicProvider struct{}
+
+func (p *panicProvider) Name() string { return "openai" }
+func (p *panicProvider) Stream(_ context.Context, _ provider.Request) (<-chan provider.Delta, error) {
+	panic("model exploded")
+}
+
+// A panicking turn must not wedge its chat: before the defer-based
+// cleanup the turns entry was never deleted (every future message
+// queued forever) and done never closed (Busy/shutdown hung).
+func TestTurnPanicRecovers(t *testing.T) {
+	cfg := &config.Config{Agents: []config.AgentConfig{{Name: "helper", Provider: "openai"}}}
+	reg := provider.NewRegistry()
+	reg.Register(&panicProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+
+	rt.launchTurn(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "hi"},
+		&cfg.Agents[0], &fakeSender{})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rt.mu.Lock()
+		_, busy := rt.turns[key]
+		rt.mu.Unlock()
+		if !busy {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	_, busy := rt.turns[key]
+	rt.mu.Unlock()
+	if busy {
+		t.Fatalf("turn still registered after panic — chat would queue forever")
+	}
+	if rt.Busy() != 0 {
+		t.Fatalf("Busy() = %d after panicked turn, want 0", rt.Busy())
+	}
+	// the chat accepts a fresh turn again (not the queue-forever path)
+	rt.launchTurn(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "again"},
+		&cfg.Agents[0], &fakeSender{})
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rt.mu.Lock()
+		_, busy = rt.turns[key]
+		rt.mu.Unlock()
+		if !busy {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	_, busy = rt.turns[key]
+	rt.mu.Unlock()
+	if busy {
+		t.Fatalf("second turn after panic also wedged")
+	}
+}
+
+// A panicking background job must unregister itself: a leaked entry
+// shows as running in /jobs forever and stopAll tries to cancel a dead
+// context forever.
+func TestBgJobPanicCleansUp(t *testing.T) {
+	cfg := &config.Config{Agents: []config.AgentConfig{{Name: "helper", Provider: "openai"}}}
+	reg := provider.NewRegistry()
+	reg.Register(&panicProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+	a := &cfg.Agents[0]
+
+	if !rt.dispatchCommand(key, channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "/bg 跑个分析"}, a, &fakeSender{}) {
+		t.Fatalf("/bg should be a command")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rt.mu.Lock()
+		n := len(rt.jobs)
+		rt.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	n := len(rt.jobs)
+	rt.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("panicked bg job still registered (%d), /jobs would show a zombie", n)
+	}
+}

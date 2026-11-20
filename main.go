@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -652,30 +653,7 @@ func runServer(cfgPath string) int {
 	inbound := b.Inbound()
 	for _, ch := range chans {
 		c := ch
-		go func() {
-			backoff := minChannelBackoff
-			for {
-				started := time.Now()
-				err := c.Start(ctx, inbound)
-				ran := time.Since(started)
-				if err == nil || ran >= healthyChannelRun {
-					// clean stop, or it ran long enough to count as healthy
-					backoff = minChannelBackoff
-				}
-				if err != nil && ctx.Err() == nil {
-					log.Printf("channel %s exited after %s: %v — restarting in %s",
-						c.Name(), ran.Round(time.Second), err, backoff)
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(backoff):
-				}
-				if err != nil {
-					backoff = nextBackoff(backoff)
-				}
-			}
-		}()
+		go superviseChannel(ctx, c, inbound, minChannelBackoff, maxChannelBackoff)
 	}
 
 	srv := &http.Server{Addr: cfg.HTTP.Listen, Handler: &mux}
@@ -699,6 +677,45 @@ func runServer(cfgPath string) int {
 	rt.Shutdown()
 	ul.Close()
 	return 0
+}
+
+// superviseChannel runs one channel adapter forever: restart with
+// exponential backoff after an exit (bad credentials, dropped
+// connection), converting panics into errors first — a malformed
+// upstream payload must cost one reconnect, not the whole process.
+func superviseChannel(ctx context.Context, c channel.Channel, inbound chan<- channel.Message, firstBackoff, maxBackoff time.Duration) {
+	backoff := firstBackoff
+	for {
+		started := time.Now()
+		err := func() (err error) {
+			defer func() {
+				if p := recover(); p != nil {
+					err = fmt.Errorf("panic in Start: %v\n%s", p, debug.Stack())
+				}
+			}()
+			return c.Start(ctx, inbound)
+		}()
+		ran := time.Since(started)
+		if err == nil || ran >= healthyChannelRun {
+			// clean stop, or it ran long enough to count as healthy
+			backoff = firstBackoff
+		}
+		if err != nil && ctx.Err() == nil {
+			log.Printf("channel %s exited after %s: %v — restarting in %s",
+				c.Name(), ran.Round(time.Second), err, backoff)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if err != nil {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
 }
 
 func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans map[string]channel.Channel, stop func(), started time.Time) {

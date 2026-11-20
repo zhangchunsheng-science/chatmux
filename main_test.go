@@ -2,14 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 )
 
 func TestLoadSkills(t *testing.T) {
@@ -178,5 +183,43 @@ func TestAdminRoutesRequireToken(t *testing.T) {
 				t.Errorf("%s %s without token = %d, want 401", method, p, resp.StatusCode)
 			}
 		}
+	}
+}
+
+// panicChan panics on its first Start (malformed upstream payload),
+// then behaves like a healthy channel until cancelled.
+type panicChan struct{ calls int32 }
+
+func (p *panicChan) Name() string { return "panic" }
+func (p *panicChan) Start(ctx context.Context, _ chan<- channel.Message) error {
+	if atomic.AddInt32(&p.calls, 1) == 1 {
+		panic("bad payload")
+	}
+	<-ctx.Done()
+	return nil
+}
+func (p *panicChan) SenderFor(channel.Message) (channel.Sender, error) { return nil, errors.New("n/a") }
+func (p *panicChan) Healthy() bool                                     { return true }
+
+// superviseChannel converts a channel-adapter panic into an error and
+// reconnects: one malformed payload must cost a reconnect, not the
+// whole process (all channels + web console).
+func TestSuperviseChannelSurvivesPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pc := &panicChan{}
+	done := make(chan struct{})
+	go func() {
+		superviseChannel(ctx, pc, make(chan channel.Message), 5*time.Millisecond, 20*time.Millisecond)
+		close(done)
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for atomic.LoadInt32(&pc.calls) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if n := atomic.LoadInt32(&pc.calls); n < 2 {
+		t.Fatalf("channel restarted %d times after panic, want ≥2 — panic would have killed the process before", n)
 	}
 }

@@ -3,6 +3,19 @@
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 
+## v0.6.42（对齐循环第 62 轮）
+
+panic 隔离——三类崩溃面全部兜住：(a) 通道适配器 Start panic（上游畸形
+payload 打崩 nil map/越界）原样带死整个进程（六通道+网页控制台全灭），
+superviseChannel 提取为可测函数并把 panic 转错误走既有指数退避重连；
+(b) turn goroutine panic 原来会跳过全部清理——turns 表项永不删（该聊天
+从此每条消息永久排队）、done 永不关（Busy/优雅停机挂死），清理改 defer
+在 panic 路径同样执行；(c) /bg 任务 panic 原 leak 进 /jobs 永显运行中，
+同样 defer 清理。日志带 debug.Stack()。测试：panicProvider 打崩
+Stream → turn 不 wedge、聊天可再起新 turn、Busy 归零；/bg panic → jobs
+表清空；panicChan 首连即崩 → superviseChannel 存活重连。全包
+-race/-count=2 审计绿 + 本地冒烟 PASS。
+
 ## v0.6.41（对齐循环第 61 轮）
 
 自更新绝不降级——apply 原只判 `latest == current`，/releases/latest

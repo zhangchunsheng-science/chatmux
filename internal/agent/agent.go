@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -252,39 +253,50 @@ func (r *Runtime) launchTurn(key session.Key, msg channel.Message, agentCfg *con
 	r.mu.Unlock()
 
 	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				log.Printf("turn panic recovered (%s/%s agent=%s): %v\n%s",
+					key.Channel, key.ChatID, agentCfg.Name, p, debug.Stack())
+			}
+			// cleanup on every path: a panicking turn must not wedge
+			// the chat (a stale turns entry queues every future
+			// message forever) nor hang Busy()/shutdown on a done
+			// channel that never closes
+			queued := t.queued
+			t.queued = nil
+			// only remove the turn after runTurn finished, so a
+			// follow-up spawned below starts a fresh turn instead of
+			// re-queueing
+			r.mu.Lock()
+			delete(r.turns, key)
+			r.mu.Unlock()
+			cancel()
+			close(t.done)
+			if len(queued) > 0 {
+				parts := make([]string, len(queued))
+				names := ""
+				for i, q := range queued {
+					parts[i] = q.Content
+					if q.Name != "" {
+						names += q.Name + " "
+					}
+				}
+				follow := channel.Message{
+					Channel:     key.Channel,
+					ChatID:      key.ChatID,
+					ThreadID:    key.ThreadID,
+					ChatType:    msg.ChatType,
+					MentionedMe: true,
+					UserName:    strings.TrimSpace(names),
+					Text:        strings.Join(parts, "\n\n"),
+				}
+				r.Handle(context.Background(), follow)
+			}
+		}()
 		r.executeTurn(tctx, key, t, msg, "")
 		if tctx.Err() == context.DeadlineExceeded {
 			log.Printf("turn watchdog: %s/%s agent=%s hit turn budget — cancelled", key.Channel, key.ChatID, agentCfg.Name)
 			metrics.WatchdogFire()
-		}
-		queued := t.queued
-		t.queued = nil
-		// only remove the turn after runTurn finished, so a follow-up
-		// spawned below starts a fresh turn instead of re-queueing
-		r.mu.Lock()
-		delete(r.turns, key)
-		r.mu.Unlock()
-		cancel()
-		close(t.done)
-		if len(queued) > 0 {
-			parts := make([]string, len(queued))
-			names := ""
-			for i, q := range queued {
-				parts[i] = q.Content
-				if q.Name != "" {
-					names += q.Name + " "
-				}
-			}
-			follow := channel.Message{
-				Channel:     key.Channel,
-				ChatID:      key.ChatID,
-				ThreadID:    key.ThreadID,
-				ChatType:    msg.ChatType,
-				MentionedMe: true,
-				UserName:    strings.TrimSpace(names),
-				Text:        strings.Join(parts, "\n\n"),
-			}
-			r.Handle(context.Background(), follow)
 		}
 	}()
 }
@@ -1271,6 +1283,20 @@ func (r *Runtime) startBgJob(key session.Key, msg channel.Message, a *config.Age
 	go func() {
 		execKey := session.Key{Channel: key.Channel, ChatID: key.ChatID + "|job" + id}
 		prefix := r.say("bg.done", id, truncate(task, 60), "") + "\n\n"
+		defer func() {
+			if p := recover(); p != nil {
+				log.Printf("bg job %s panic recovered: %v\n%s", id, p, debug.Stack())
+			}
+			// cleanup on every path: a panicking job must not linger
+			// in /jobs forever nor leak its session
+			r.mu.Lock()
+			delete(r.jobs, id)
+			r.mu.Unlock()
+			// job sessions are dead weight: nothing resumes them, and
+			// without this they accumulate in memory one per job ever
+			// run
+			r.sessions.Reset(execKey)
+		}()
 		if flowName != "" {
 			out, err := r.runFlow(jctx, execKey, flowName, task)
 			if ctxErr := jctx.Err(); ctxErr != nil {
@@ -1286,12 +1312,6 @@ func (r *Runtime) startBgJob(key session.Key, msg channel.Message, a *config.Age
 			cancel()
 			close(t.done)
 		}
-		r.mu.Lock()
-		delete(r.jobs, id)
-		r.mu.Unlock()
-		// job sessions are dead weight: nothing resumes them, and without
-		// this they accumulate in memory one per job ever run
-		r.sessions.Reset(execKey)
 	}()
 
 	go func() {

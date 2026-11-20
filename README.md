@@ -322,7 +322,9 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 运维接口
 
-- `GET /healthz` — 存活/降级探测（任一通道断开即 503）
+- `GET /healthz` — 存活/降级探测（任一通道断开即 503）；通道适配器 panic
+  被转为错误走指数退避重连，turn/bg 任务 panic 被 recover 并清理登记——
+  单点崩溃不再带走整个进程
 - `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
   每 agent 调用数与 token、👍/👎 总量、uptime、看门狗触发数、流启动重试数
 - `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）；
@@ -376,6 +378,10 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.42（对齐循环第 62 轮）：panic 隔离——通道适配器 panic 转错误走
+退避重连、turn/bg 任务 panic 被 recover 且 defer 清理（不 wedge 聊天、
+不挂死停机、不 leak 任务表）；单点崩溃不再带走整个进程。-race 全量绿。
+
 v0.6.41（对齐循环第 61 轮）：自更新绝不降级——版本按数值段比较
 （0.6.10 > 0.6.9），latest 比当前旧视为已是最新，二进制分毫不动。
 
@@ -393,9 +399,5 @@ v0.6.38（对齐循环第 58 轮）：admin 路由鉴权守护——全部 /admi
 
 v0.6.37（对齐循环第 57 轮）：README 命令表防漂移守护——26 条 dispatch
 命令逐个断言有文档行，忘补文档直接测试失败。
-
-v0.6.36（对齐循环第 56 轮）：会话存储字节封顶——单条消息 64KB（保头保
-尾）、单会话 400KB（约为回放预算 5 倍，超则丢最旧对）；贴大文档不再撑
-爆内存与每轮 Save 的全量重编。附全包 -race/-count=2 审计绿。
 
 MIT
