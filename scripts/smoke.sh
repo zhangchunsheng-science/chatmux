@@ -193,6 +193,7 @@ send_and_wait '"洪流二"' "洪流二" 20 flood
 send_and_wait '"洪流三"' "消息太密集" 20 flood
 METRICS="$(curl -sf -H "X-Admin-Token: $TOKEN" "$BASE/metrics")" || fail "metrics (rate)"
 echo "$METRICS" | grep -Eq 'chatmux_turns_rate_limited_total [1-9]' || fail "metrics missing rate-limit counter"
+echo "$METRICS" | grep -Eq 'chatmux_turn_fallbacks_total [1-9]' || fail "metrics missing fallback counter for the phase-3 hop"
 
 # ---- graceful stop ----
 note "stopping"

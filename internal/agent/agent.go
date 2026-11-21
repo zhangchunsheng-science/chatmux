@@ -853,6 +853,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 		// partial reply exists), and never after a cancel (/stop must
 		// win). Chain depth is capped, so loops are cut.
 		if fb := r.fallbackFor(t); fb != nil && ctx.Err() == nil {
+			metrics.TurnFallback()
 			log.Printf("turn fallback: %s/%s agent=%s failed at stream start (%v) — retrying on agent=%s",
 				key.Channel, key.ChatID, t.agent.Name, err, fb.Name)
 			t2 := *t

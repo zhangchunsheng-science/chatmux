@@ -1006,6 +1006,8 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 			fmt.Sprintf("chatmux_channel_reconnects_total %d\n", cRestarts))
 		b.WriteString("# HELP chatmux_turns_rate_limited_total Model turns refused by the per-chat rate window.\n# TYPE chatmux_turns_rate_limited_total counter\n" +
 			fmt.Sprintf("chatmux_turns_rate_limited_total %d\n", metrics.RateLimitedTurns()))
+		b.WriteString("# HELP chatmux_turn_fallbacks_total Turns re-routed to a fallback agent after primary stream-start failure.\n# TYPE chatmux_turn_fallbacks_total counter\n" +
+			fmt.Sprintf("chatmux_turn_fallbacks_total %d\n", metrics.TurnFallbacks()))
 
 		aggs, err := usage.Summarize(cfg.DataDir)
 		if err == nil {

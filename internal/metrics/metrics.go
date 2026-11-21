@@ -3,8 +3,9 @@
 //
 // These count events the usage log can't show (they are transport
 // health, not model calls): turns killed by the budget watchdog,
-// model streams retried after a transient start failure, and channel
-// adapters bouncing in and out of connection.
+// model streams retried after a transient start failure, channel
+// adapters bouncing in and out of connection, turns refused by the
+// per-chat rate window, and turns re-routed to a fallback agent.
 package metrics
 
 import "sync/atomic"
@@ -14,6 +15,7 @@ var (
 	streamRetries    atomic.Int64
 	channelRestarts  atomic.Int64
 	turnsRateLimited atomic.Int64
+	turnFallbacks    atomic.Int64
 )
 
 // WatchdogFire records one turn cancelled by the turn-budget watchdog.
@@ -35,6 +37,15 @@ func TurnRateLimited() { turnsRateLimited.Add(1) }
 
 // RateLimitedTurns returns turns refused by the rate window so far.
 func RateLimitedTurns() int64 { return turnsRateLimited.Load() }
+
+// TurnFallback records one turn re-routed to its fallbackAgent after the
+// primary failed at stream start. Any steady rate means the primary's
+// gateway/key is down — the bot keeps answering on the backup, so nothing
+// else will tell you.
+func TurnFallback() { turnFallbacks.Add(1) }
+
+// TurnFallbacks returns turns re-routed to a fallback agent so far.
+func TurnFallbacks() int64 { return turnFallbacks.Load() }
 
 // Snapshot returns (watchdog fires, stream retries, channel restarts)
 // since process start.

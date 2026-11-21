@@ -187,9 +187,10 @@ system 提示词即可把它当"问人工具"用。每个聊天同时只有一�
 ## 引用上下文
 
 回复别人的消息时，被引内容自动注入模型上下文（`[引用 老王 的消息]…`）。
-飞书（回复消息）、Telegram、Discord、Slack（线程跟帖）均已接；飞书话题群
-内跟帖不算引用，走话题锚点会话；Telegram 论坛超群按 message_thread_id
-（话题）隔离会话，回复自动落回原话题。
+飞书（回复消息）、Telegram、Discord、Slack（线程跟帖）均已接；钉钉与企微
+的机器人回调不含引用字段（平台不喂，属边界非缺口）。飞书话题群内跟帖不算
+引用，走话题锚点会话；Telegram 论坛超群按 message_thread_id（话题）隔离
+会话，回复自动落回原话题。
 
 ## 语音转写
 
@@ -405,6 +406,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.67（对齐循环第 87 轮）：回退跳上指标——fallbackAgent（v0.6.61）触发后此前只有 daemon 日志一行，watchdog/流重试/限流/通道重连四族都有指标唯独它没有；chatmux_turn_fallbacks_total 进 /metrics（渲染守护自动纳管），攀升=主 agent 网关挂了、bot 靠备胎在答。守护：回退测试加指标增量断言 + 冒烟阶段 3 补计数断言。盘点引用上下文：Quoted 生产者 4/6 通道，钉钉 SDK 回调模型与企微回调 XML 均无引用字段（平台边界，README 已注记）。
+
 v0.6.66（对齐循环第 86 轮）：fleet CLI 挂死免疫——status/send/ask 的 HTTP 请求此前零 deadline，卡死网关（accepts 不 answers）能把 CLI 挂到 Ctrl-C；现在 status/send 30s 快超时、ask 在 -timeout 之上加 30s 缓冲（list 本就 5s/实例）。顺带修 -opt=A 等号形式被手写扫描静默丢弃（换 flag.Func，两种写法等价可重复）。守护测试：Call 的 ctx deadline 传导 + runFleet 级双挂死回归 + -opt 双形式载荷断言。
 
 v0.6.65（对齐循环第 85 轮）：CI 注解按上限排优先级——GitHub 每步最多存 ~10 条注解，原管道先发断言块再发标识符，v0.6.64 的 stress 红被截断得只剩裸 exit 1（失败测试名全丢，白瞎一轮诊断）；现改为标识符先行（--- FAIL 测试名、FAIL 包名、panic、冒烟步骤），断言块填剩余槽位，截断也先保名字。合成日志 bash 干跑验证排序。
@@ -414,7 +417,5 @@ v0.6.64（对齐循环第 84 轮）：配置字段消费守护——TestConfigFi
 v0.6.63（对齐循环第 83 轮）：check 网关探测——agent baseUrl 逐个 TCP 探活（每个不同地址只探一次）：解析失败是 problem（确定性），连不上是 warning（可能是隧道/临时抖动），拼错网关从首条消息翻车提前到启动体检。测试四象限：活网关零输出、死端口仅警告、坏 URL 报 problem、重复地址只警一次。
 
 v0.6.62（对齐循环第 82 轮）：修真 bug——agent 级 baseUrl 从未生效（openai/anthropic provider 只读结构体默认值、无视 Request.BaseURL，配了 DeepSeek/vLLM/one-api 网关的 agent 全部静默直连 api.openai.com/api.anthropic.com；冒烟的死端口阶段其实一直在打真 OpenAI 拿 401 侥幸当失败）。两级解析：req.BaseURL 优先、provider 默认兜底，双 provider 回归测试（httptest 断言请求真达网关）。冒烟扩到四阶段：新增本地假 SSE 模型服务器实测回退跳（死主库→备用 marker 回聊）+ 限流阶段（3 连发第三条必拒、计数上指标）。
-
-v0.6.61（对齐循环第 81 轮）：agent 热备链——fallbackAgent 在主模型流启动失败（尚无任何输出）时自动换备用 agent 重试同一 turn，主模型宕机/额度烧穿不再让 bot 静默；只限启动失败（半截输出不重试）、取消不回退（/stop 必须赢）、链深 2 跳封顶（环被切断）、CLI agent 不作目标；check 对自指/未知/CLI 目标报 problem。守护测试：备用接住主故障（用户无感）+ 三 agent 环链实测 6 次调用封顶。
 
 MIT

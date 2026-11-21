@@ -1496,10 +1496,14 @@ func TestFallbackAgentAnswersWhenPrimaryDown(t *testing.T) {
 	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
 	s := &fakeSender{}
 	rt.chans["feishu"] = &stubChannel{sender: s}
+	before := metrics.TurnFallbacks()
 	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "救场"})
 	waitContains(t, s, "救场") // echoed by the backup, not a model.fail notice
 	if strings.Contains(s.joined(), "model.fail") && !strings.Contains(s.joined(), "救场") {
 		t.Fatal("primary failure must not surface to the user when the backup answers")
+	}
+	if got := metrics.TurnFallbacks() - before; got < 1 {
+		t.Fatalf("fallback jump must count on metrics, delta=%d", got)
 	}
 }
 

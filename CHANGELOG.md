@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.67（对齐循环第 87 轮）
+
+- 回退跳上指标：fallbackAgent 是 v0.6.61 的 headline 特性，但触发后只有 daemon 日志一行——watchdog/流重试/限流/通道重连四族都上了指标，唯独它裸奔。现在 `chatmux_turn_fallbacks_total` 进 /metrics（渲染守护自动纳管），稳定攀升=主 agent 网关/key 挂了、bot 靠备胎在答，别处看不出任何异常。
+- 守护：TestFallbackAgentAnswersWhenPrimaryDown 加指标增量断言（全局计数器用前后差值，不吃并发测试的账）；冒烟阶段 3 的回退跳新增计数断言（与限流断言并列）。
+- 顺带盘点引用上下文覆盖：Quoted 生产者 4/6 通道（feishu/telegram/slack/discord），钉钉 SDK 回调模型与企微回调 XML 均无引用字段——平台不喂，属边界非缺口，README 边界注记。
+
 ## v0.6.66（对齐循环第 86 轮）
 
 - fleet 客户端兜底超时：list 本来就有 5s/实例，但 status/send/ask 的 HTTP 请求此前零 deadline——一个 accepts-but-never-answers 的卡死网关能把 CLI 挂到 Ctrl-C 为止。现在 status/send 走 30s 快超时，ask 在 `-timeout`（默认 600s）之上加 30s 缓冲，给网关留满回答时间。
