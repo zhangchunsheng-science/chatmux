@@ -1,5 +1,10 @@
 # 更新日志
 
+## v0.6.63（对齐循环第 83 轮）
+
+- `chatmux check` 网关探活：agent `baseUrl` 逐个 TCP 探测（相同地址只探一次）——URL 解析失败是 problem（确定性配置错误），TCP 连不上是 warning（服务可能有 check 看不到的隧道，或临时抖动）。拼错网关从"首条消息 404/超时翻车"提前到启动体检；这是 baseUrl 修复（v0.6.62）后的最后一公里：URL 现在真的被使用了，值得在配置期验证它。
+- 测试四象限：httptest 活网关零输出、127.0.0.1:1 死端口恰好一条警告、`http://[::1:bad` 报 problem、两个 agent 共用同一死地址只警告一次。
+
 ## v0.6.62（对齐循环第 82 轮）
 
 - **修复真 bug**：agent 级 `baseUrl` 从未生效——openai/anthropic provider 的 URL 只读注册时的结构体默认值，无视每请求的 `Request.BaseURL`；配置了 DeepSeek/Moonshot/vLLM/one-api 网关的 agent 全部静默直连 OpenAI/Anthropic 官方端点（冒烟的"死端口"阶段也一直在打真 api.openai.com，401 侥幸被当成了预期失败）。两级解析改为 req.BaseURL 优先、provider 默认兜底；双 provider 各补 httptest 回归测试（请求必须真达网关 URL）。

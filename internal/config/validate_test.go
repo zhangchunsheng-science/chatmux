@@ -2,6 +2,8 @@ package config
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -373,4 +375,57 @@ func TestValidateFallbackAgent(t *testing.T) {
 	if p, _ := Validate(base("ghost")); len(p) == 0 {
 		t.Error("unknown fallbackAgent must be a problem")
 	}
+}
+
+func TestValidateBaseURLProbe(t *testing.T) {
+	srv := startTestHTTPServer(t) // a live gateway: must produce no probe output
+	base := func(url string) *Config {
+		return &Config{
+			Agents: []AgentConfig{{Name: "a", Provider: "openai", APIKey: "k", BaseURL: url}},
+			HTTP:   HTTPConfig{Listen: testListen(t)},
+		}
+	}
+	if p, w := Validate(base(srv.URL)); len(p) != 0 || len(baseURLWarnings(w)) != 0 {
+		t.Errorf("live baseUrl flagged: problems=%v warnings=%v", p, w)
+	}
+	// dead port on loopback: refused instantly → warning, not problem
+	if p, w := Validate(base("http://127.0.0.1:1/v1")); len(p) != 0 || len(baseURLWarnings(w)) != 1 {
+		t.Errorf("dead baseUrl: problems=%v warnings=%v (want warning only)", p, w)
+	}
+	// unparseable: deterministic → problem
+	if p, _ := Validate(base("http://[::1:bad")); len(p) == 0 {
+		t.Error("unparseable baseUrl must be a problem")
+	}
+	// the same dead URL twice: probed (and warned) once
+	_, w := Validate(&Config{
+		Agents: []AgentConfig{
+			{Name: "a", Provider: "openai", APIKey: "k", BaseURL: "http://127.0.0.1:1/v1"},
+			{Name: "b", Provider: "openai", APIKey: "k", BaseURL: "http://127.0.0.1:1/v1"},
+		},
+		HTTP: HTTPConfig{Listen: testListen(t)},
+	})
+	if got := len(baseURLWarnings(w)); got != 1 {
+		t.Errorf("duplicate baseUrl warned %d times, want 1 (%v)", got, w)
+	}
+}
+
+func startTestHTTPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// baseURLWarnings filters out the standing "no channels" advisory so
+// probe assertions see only gateway-probe output.
+func baseURLWarnings(w []string) []string {
+	var out []string
+	for _, s := range w {
+		if strings.Contains(s, "baseUrl") {
+			out = append(out, s)
+		}
+	}
+	return out
 }

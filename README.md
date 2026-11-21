@@ -358,8 +358,9 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   建议）；拼写错的键名（`apikey`/`lisen` 这类被 JSON 解码器静默丢弃的）
   按路径点名并给近似建议；dataDir 不可写、模型 agent 无 apiKey 且对应
   环境变量未设、监听端口已被占（双实例最常见的死法）、adminToken 为空
-  且监听非回环（`/admin/*` 会向全网开放，chat 花的是你的 API key）预警
-  但不阻启
+  且监听非回环（`/admin/*` 会向全网开放，chat 花的是你的 API key）、
+  agent baseUrl 连不上（TCP 探活去重后逐址一次，可能是隧道或拼错网关）
+  预警但不阻启
 
 ## 各平台接入要点
 
@@ -400,6 +401,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.63（对齐循环第 83 轮）：check 网关探测——agent baseUrl 逐个 TCP 探活（每个不同地址只探一次）：解析失败是 problem（确定性），连不上是 warning（可能是隧道/临时抖动），拼错网关从首条消息翻车提前到启动体检。测试四象限：活网关零输出、死端口仅警告、坏 URL 报 problem、重复地址只警一次。
+
 v0.6.62（对齐循环第 82 轮）：修真 bug——agent 级 baseUrl 从未生效（openai/anthropic provider 只读结构体默认值、无视 Request.BaseURL，配了 DeepSeek/vLLM/one-api 网关的 agent 全部静默直连 api.openai.com/api.anthropic.com；冒烟的死端口阶段其实一直在打真 OpenAI 拿 401 侥幸当失败）。两级解析：req.BaseURL 优先、provider 默认兜底，双 provider 回归测试（httptest 断言请求真达网关）。冒烟扩到四阶段：新增本地假 SSE 模型服务器实测回退跳（死主库→备用 marker 回聊）+ 限流阶段（3 连发第三条必拒、计数上指标）。
 
 v0.6.61（对齐循环第 81 轮）：agent 热备链——fallbackAgent 在主模型流启动失败（尚无任何输出）时自动换备用 agent 重试同一 turn，主模型宕机/额度烧穿不再让 bot 静默；只限启动失败（半截输出不重试）、取消不回退（/stop 必须赢）、链深 2 跳封顶（环被切断）、CLI agent 不作目标；check 对自指/未知/CLI 目标报 problem。守护测试：备用接住主故障（用户无感）+ 三 agent 环链实测 6 次调用封顶。
@@ -409,10 +412,5 @@ v0.6.60（对齐循环第 80 轮）：模型回放预算可配——maxContextCh
 v0.6.59（对齐循环第 79 轮）：刷屏保护——turnRatePerMinute 每会话 60 秒滑动窗口封顶模型 turn 数（0 不限），超出回提示并丢弃，命令不受限；钩子在 launchTurn 单一咽喉点，直发/排队合批/重试/富化全路径覆盖；触发计数上 chatmux_turns_rate_limited_total 指标（渲染守护自动纳管），check 对负值报 problem。守护测试三件：窗口数学纯函数（拒绝不占额度、过期自动滑出）、计数 provider 断言第三条永不达模型、命令在拒绝后仍可用。
 
 v0.6.58（对齐循环第 78 轮）：定位并修复数月来的 CI 偶发失败（v0.6.31/46/52/56/57 同一根因）——agent 测试经 internal/agent/data/sessions.json 在磁盘上共享会话状态（空 DataDir 默认落到真实 data/ 目录，被 .gitignore 掩盖）；用 GOMAXPROCS=2 + -shuffle + -count=3 在本地 10 种子复现 4 次，全部测试改用 t.TempDir() 隔离后 10/10 全绿。CI 注解同步升级为 awk 整块捕获（含多行断言输出），失败时能直接看到断言全文。
-
-v0.6.57（对齐循环第 77 轮）：flake 追查装备升级——v0.6.56 的 ci 失败首次被
-注解点名（TestBusyAndShutdownDrain，0.00s 即败），但断言消息行（want X got Y）
-不在注解里仍无法定位。注解管道补 `_test.go:行号:` 断言行捕获；ci 新增
-agent 包 GOMAXPROCS=2 + shuffle + count=3 压测步（贴近 2 核 runner 时序）。
 
 MIT

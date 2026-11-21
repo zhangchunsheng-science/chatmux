@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,6 +29,7 @@ func Validate(cfg *Config) (problems, warnings []string) {
 	warn := func(format string, args ...any) {
 		warnings = append(warnings, fmt.Sprintf(format, args...))
 	}
+	probedBaseURLs := map[string]bool{} // dial each distinct baseUrl once
 
 	channels := map[string]bool{}
 	for i, c := range cfg.Channels {
@@ -142,6 +144,33 @@ func Validate(cfg *Config) (problems, warnings []string) {
 			env := map[string]string{"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}[p]
 			if env != "" && os.Getenv(env) == "" {
 				warn("agents[%d] %q: no apiKey and %s not set — model calls would fail auth at runtime", i, a.Name, env)
+			}
+		}
+		// gateway probe: a baseUrl that doesn't parse or doesn't answer
+		// TCP means every turn fails before auth — catch typos at check
+		// time instead of first message time. Parse errors are problems
+		// (deterministic); unreachable is a warning (could be a tunnel
+		// the service has but check doesn't, or a temporary outage).
+		if a.Cli == nil && a.BaseURL != "" && probedBaseURLs[a.BaseURL] == false {
+			probedBaseURLs[a.BaseURL] = true
+			u, err := url.Parse(a.BaseURL)
+			if err != nil || u.Host == "" {
+				add("agents[%d] %q: baseUrl %q does not parse as a URL", i, a.Name, a.BaseURL)
+			} else {
+				host := u.Hostname()
+				port := u.Port()
+				if port == "" {
+					if u.Scheme == "https" {
+						port = "443"
+					} else {
+						port = "80"
+					}
+				}
+				if c, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 2*time.Second); err != nil {
+					warn("agents[%d] %q: baseUrl %s unreachable (%v) — every model turn would fail if this persists", i, a.Name, u.Host, err)
+				} else {
+					c.Close()
+				}
 			}
 		}
 		if a.Cli != nil {
