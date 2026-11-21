@@ -94,7 +94,12 @@ func (a *Anthropic) Stream(ctx context.Context, req Request) (<-chan Delta, erro
 	if model == "" {
 		model = "claude-sonnet-4-5"
 	}
-	base := a.BaseURL
+	// per-agent baseUrl (req.BaseURL) beats the provider-level default,
+	// mirroring the openai provider's gateway support
+	base := req.BaseURL
+	if base == "" {
+		base = a.BaseURL
+	}
 	if base == "" {
 		base = "https://api.anthropic.com"
 	}

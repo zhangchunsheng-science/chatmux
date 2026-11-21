@@ -27,7 +27,13 @@ type OpenAI struct {
 
 func (o *OpenAI) Name() string { return "openai" }
 
-func (o *OpenAI) baseURL() string {
+// baseURL resolves per call: the agent's baseUrl (req.BaseURL — the
+// documented way to point an agent at DeepSeek/Moonshot/vLLM/one-api
+// and other compatible gateways) beats the provider-level default.
+func (o *OpenAI) baseURL(req Request) string {
+	if req.BaseURL != "" {
+		return strings.TrimRight(req.BaseURL, "/")
+	}
 	if o.BaseURL != "" {
 		return strings.TrimRight(o.BaseURL, "/")
 	}
@@ -144,7 +150,7 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (<-chan Delta, error) 
 	})
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST",
-		o.baseURL()+"/chat/completions", bytes.NewReader(body))
+		o.baseURL(req)+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

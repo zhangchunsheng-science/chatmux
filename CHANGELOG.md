@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.62（对齐循环第 82 轮）
+
+- **修复真 bug**：agent 级 `baseUrl` 从未生效——openai/anthropic provider 的 URL 只读注册时的结构体默认值，无视每请求的 `Request.BaseURL`；配置了 DeepSeek/Moonshot/vLLM/one-api 网关的 agent 全部静默直连 OpenAI/Anthropic 官方端点（冒烟的"死端口"阶段也一直在打真 api.openai.com，401 侥幸被当成了预期失败）。两级解析改为 req.BaseURL 优先、provider 默认兜底；双 provider 各补 httptest 回归测试（请求必须真达网关 URL）。
+- 冒烟扩到四阶段：新增本地零依赖假 SSE 模型服务器（python3 stdlib），阶段 3 实测热备回退（死主库 → fallback 备用应答 marker 回聊、daemon 日志有 turn fallback 行、usage 双记录）；阶段 4 实测每会话限流（同窗三连发第三条收拒信、chatmux_turns_rate_limited_total 计数 ≥1）。
+- 发现路径本身就是教训：给新功能补端到端冒烟时，假服务器一直拿 401，lsof 抓到连接走向 fake-ip 443 才暴露 provider 无视 baseUrl 的真 bug——单测绿≠配置链路通。
+
 ## v0.6.61（对齐循环第 81 轮）
 
 - agent 热备链（hot backup）：`fallbackAgent` 在主模型流启动失败时自动换备用 agent 重试同一 turn——此前主模型 API 宕机或额度烧穿，bot 只会回一句失败，现在配一个独立 provider 的备用 agent 即可无感接住。

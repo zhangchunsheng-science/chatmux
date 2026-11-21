@@ -53,3 +53,36 @@ func TestOpenAIBuildsStreamRequest(t *testing.T) {
 		t.Fatal("system prompt must be first message")
 	}
 }
+
+// Regression: the agent-level baseUrl (Request.BaseURL — how configs
+// point agents at DeepSeek/vLLM/one-api gateways) must beat the
+// provider struct default. It used to be silently ignored: every
+// gateway-configured agent actually hit api.openai.com.
+func TestOpenAIRequestBaseURLBeatsDefault(t *testing.T) {
+	reached := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"gw\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	o := &OpenAI{APIKey: "sk-test"} // no struct BaseURL: default would be api.openai.com
+	ch, err := o.Stream(context.Background(), Request{
+		Model:    "m",
+		BaseURL:  srv.URL,
+		Messages: []Msg{{Role: User, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for d := range ch {
+		if d.Err != nil {
+			t.Fatal(d.Err)
+		}
+	}
+	if !reached {
+		t.Fatal("request never reached the gateway URL — Request.BaseURL ignored")
+	}
+}

@@ -400,6 +400,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.62（对齐循环第 82 轮）：修真 bug——agent 级 baseUrl 从未生效（openai/anthropic provider 只读结构体默认值、无视 Request.BaseURL，配了 DeepSeek/vLLM/one-api 网关的 agent 全部静默直连 api.openai.com/api.anthropic.com；冒烟的死端口阶段其实一直在打真 OpenAI 拿 401 侥幸当失败）。两级解析：req.BaseURL 优先、provider 默认兜底，双 provider 回归测试（httptest 断言请求真达网关）。冒烟扩到四阶段：新增本地假 SSE 模型服务器实测回退跳（死主库→备用 marker 回聊）+ 限流阶段（3 连发第三条必拒、计数上指标）。
+
 v0.6.61（对齐循环第 81 轮）：agent 热备链——fallbackAgent 在主模型流启动失败（尚无任何输出）时自动换备用 agent 重试同一 turn，主模型宕机/额度烧穿不再让 bot 静默；只限启动失败（半截输出不重试）、取消不回退（/stop 必须赢）、链深 2 跳封顶（环被切断）、CLI agent 不作目标；check 对自指/未知/CLI 目标报 problem。守护测试：备用接住主故障（用户无感）+ 三 agent 环链实测 6 次调用封顶。
 
 v0.6.60（对齐循环第 80 轮）：模型回放预算可配——maxContextChars 按 agent 覆盖历史回放上限（默认全局 80k 字符），小上下文模型（4k/8k）调小防 400，长上下文模型调大不冤枉截断；最旧对话先丢、保底一轮、当前消息永不裁；check 负值报 problem，README 部署节补文档。守护测试：预算解析纯函数 + 捕获 provider 实测 300 字符预算下回放被裁到 ≤300 且保底一轮仍在。
@@ -412,11 +414,5 @@ v0.6.57（对齐循环第 77 轮）：flake 追查装备升级——v0.6.56 的 
 注解点名（TestBusyAndShutdownDrain，0.00s 即败），但断言消息行（want X got Y）
 不在注解里仍无法定位。注解管道补 `_test.go:行号:` 断言行捕获；ci 新增
 agent 包 GOMAXPROCS=2 + shuffle + count=3 压测步（贴近 2 核 runner 时序）。
-
-v0.6.56（对齐循环第 76 轮）：持久化原子写修复——四个状态文件（sessions/
-dedup/cli-sessions/schedules）原来共用固定 `<path>.tmp`，每轮 turn 异步保存，
-并发时两个 goroutine 交错写同一临时文件再 rename，损坏的 sessions.json 被
-Load 静默吞掉=全部对话蒸发且无报错。收敛到 internal/atomicfile（唯一临时名），
-并发撕裂测试（4 写者+热读者，损坏即败）+ 并发 Save 回归守护。
 
 MIT
