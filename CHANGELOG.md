@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.66（对齐循环第 86 轮）
+
+- fleet 客户端兜底超时：list 本来就有 5s/实例，但 status/send/ask 的 HTTP 请求此前零 deadline——一个 accepts-but-never-answers 的卡死网关能把 CLI 挂到 Ctrl-C 为止。现在 status/send 走 30s 快超时，ask 在 `-timeout`（默认 600s）之上加 30s 缓冲，给网关留满回答时间。
+- 顺带修掉 `-opt=A` 等号形式被静默丢弃的问题：手写扫描只认 `-opt A` 相邻对，现在换成 `flag.Func`，两种写法等价且真正可重复。
+- 守护测试三件：fleet `Call` 对 ctx deadline 的传导（wedged 网关 150ms 报错而非挂死）、runFleet 级 status+ask 双挂死回归（超时变量测试内收窄）、`-opt` 两种形式的载荷断言。
+- 教训：httptest 假挂死服务用 channel-release 模式会死锁在 `hang.Close()`（它等同 outstanding handler）；正确做法是有界 sleep——比客户端 deadline 长、比测试短。
+
 ## v0.6.65（对齐循环第 85 轮）
 
 - CI 失败注解按 GitHub 每步 ~10 条的存储上限排优先级：原来管道先发射断言块（每块最多 25 行）再发射标识符，v0.6.64 的 agent stress 红被截断得只剩一条裸 "exit code 1"——失败测试名全部丢失，白费一轮盲诊断（本地 6 轮复跑全绿后只能按 46/52 协议空提交重跑）。

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadAndGet(t *testing.T) {
@@ -77,5 +78,28 @@ func TestCallProxy(t *testing.T) {
 		map[string]string{"channel": "feishu", "chatId": "oc_1", "text": "hi"})
 	if err != nil || code != 200 {
 		t.Fatalf("code=%d err=%v body=%s", code, err, body)
+	}
+}
+
+// TestCallHonorsContextDeadline pins the ctx-deadline plumbing: a gateway
+// that accepts but never answers must surface a ctx error, not hang the
+// CLI until Ctrl-C (the fleet status/send/ask timeouts rely on this).
+func TestCallHonorsContextDeadline(t *testing.T) {
+	// wedge: answers after 2s — past the 150ms deadline, but never past
+	// the test (a channel-release pattern deadlocks in hang.Close()).
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	defer hang.Close()
+	c := &Config{Instances: []Instance{{Name: "wedged", BaseURL: hang.URL}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, _, err := c.Call(ctx, "wedged", http.MethodGet, "/admin/status", nil)
+	if err == nil {
+		t.Fatal("wedged gateway should error")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("call took %s; deadline not honored", elapsed)
 	}
 }

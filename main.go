@@ -272,6 +272,14 @@ func runClient(args []string, cfgPath string) int {
 	return 0
 }
 
+// fleet 客户端兜底超时（list 本来就是 5s/实例）：status/send 是管理面
+// 快操作，30s 足够；ask 网关最多等到 -timeout 秒才回答，再加缓冲。
+// 没有它们，一个卡死的网关能把 CLI 挂到 Ctrl-C 为止。测试里可调小。
+var (
+	fleetQuickTimeout = 30 * time.Second
+	fleetAskGrace     = 30 * time.Second
+)
+
 // runFleet: chatmux fleet list|status <名>|send <名> -to ch:chat 文本|ask <名> -to ch:chat 问题
 // Fleet file: -fleet 路径（默认 ~/.chatmux/fleet.json），格式
 // {"instances":[{"name":"x","baseUrl":"http://...","token":"..."}]}
@@ -324,7 +332,9 @@ func runFleet(args []string) int {
 			fmt.Fprintln(os.Stderr, "usage: chatmux fleet status <实例>")
 			return 2
 		}
-		body, code, err := fc.Call(ctx, rest[0], http.MethodGet, "/admin/status", nil)
+		cctx, cancel := context.WithTimeout(ctx, fleetQuickTimeout)
+		defer cancel()
+		body, code, err := fc.Call(cctx, rest[0], http.MethodGet, "/admin/status", nil)
 		if err != nil || code != 200 {
 			fmt.Fprintf(os.Stderr, "HTTP %d err=%v\n", code, err)
 			return 1
@@ -342,7 +352,8 @@ func runFleet(args []string) int {
 		fs := flag.NewFlagSet("fleet "+sub, flag.ExitOnError)
 		to := fs.String("to", "", "channel:chatId[:threadId]")
 		timeout := fs.Int("timeout", 600, "ask timeout seconds")
-		_ = fs.String("opt", "", "fixed option (repeatable)")
+		var opts []string
+		fs.Func("opt", "fixed option (repeatable)", func(v string) error { opts = append(opts, v); return nil })
 		fs.Parse(rest[1:])
 		text := strings.Join(fs.Args(), " ")
 		if *to == "" || strings.TrimSpace(text) == "" {
@@ -358,23 +369,22 @@ func runFleet(args []string) int {
 		} else {
 			path = "/admin/ask"
 			payload = map[string]any{"channel": parts[0], "chatId": parts[1], "question": text, "timeoutSec": *timeout}
-		}
-		if len(parts) == 3 {
-			payload.(map[string]any)["threadId"] = parts[2]
-		}
-		if sub == "ask" {
-			var opts []string
-			raw := rest[1:]
-			for i := 0; i < len(raw); i++ {
-				if raw[i] == "-opt" && i+1 < len(raw) {
-					opts = append(opts, raw[i+1])
-				}
-			}
 			if len(opts) > 0 {
 				payload.(map[string]any)["options"] = opts
 			}
 		}
-		body, code, err := fc.Call(ctx, name, http.MethodPost, path, payload)
+		if len(parts) == 3 {
+			payload.(map[string]any)["threadId"] = parts[2]
+		}
+		// 客户端兜底超时：send 投递即返走快超时；ask 给网关留满
+		// -timeout 的回答时间再加缓冲，两头都不会永远挂着。
+		deadline := fleetQuickTimeout
+		if sub == "ask" {
+			deadline = time.Duration(*timeout)*time.Second + fleetAskGrace
+		}
+		cctx, cancel := context.WithTimeout(ctx, deadline)
+		defer cancel()
+		body, code, err := fc.Call(cctx, name, http.MethodPost, path, payload)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1

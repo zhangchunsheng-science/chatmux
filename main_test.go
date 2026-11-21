@@ -3,14 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -418,5 +421,80 @@ func TestRunServerBindFailureReturns(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("runServer did not return on bind failure — would it Fatalf?")
+	}
+}
+
+// TestRunFleetTimeoutsGuardHangs pins the fleet client-side deadlines: a
+// wedged gateway (accepts, never answers) must fail status fast and fail
+// ask after -timeout+grace — not hang the CLI until Ctrl-C.
+func TestRunFleetTimeoutsGuardHangs(t *testing.T) {
+	// wedge: answers after 2s — far past the 150ms client deadline, but
+	// never past the test itself (a channel-release pattern deadlocks in
+	// hang.Close(), which waits for outstanding handlers).
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	defer hang.Close()
+	dir := t.TempDir()
+	fleetPath := filepath.Join(dir, "fleet.json")
+	if err := os.WriteFile(fleetPath, []byte(`{"instances":[{"name":"w","baseUrl":"`+hang.URL+`"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CHATMUX_FLEET", fleetPath)
+
+	oldQuick, oldGrace := fleetQuickTimeout, fleetAskGrace
+	fleetQuickTimeout, fleetAskGrace = 150*time.Millisecond, 150*time.Millisecond
+	defer func() { fleetQuickTimeout, fleetAskGrace = oldQuick, oldGrace }()
+
+	done := make(chan int, 2)
+	start := time.Now()
+	go func() { done <- runFleet([]string{"status", "w"}) }()
+	go func() { done <- runFleet([]string{"ask", "w", "-to", "web:c1", "-timeout", "0", "在吗"}) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case c := <-done:
+			if c != 1 {
+				t.Fatalf("exit = %d, want 1", c)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("wedged gateway hung the fleet CLI — client deadline not wired")
+		}
+	}
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Fatalf("took %s; deadlines not honored", elapsed)
+	}
+}
+
+// TestRunFleetAskOptForms pins repeatable -opt parsing: both "-opt A" and
+// "-opt=B" must reach the gateway as options (the old manual scan silently
+// dropped the equals form).
+func TestRunFleetAskOptForms(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Options []string `json:"options"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		got = req.Options
+		mu.Unlock()
+		w.Write([]byte(`{"answer":"ok"}`))
+	}))
+	defer ts.Close()
+	dir := t.TempDir()
+	fleetPath := filepath.Join(dir, "fleet.json")
+	if err := os.WriteFile(fleetPath, []byte(`{"instances":[{"name":"ok","baseUrl":"`+ts.URL+`"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CHATMUX_FLEET", fleetPath)
+
+	if code := runFleet([]string{"ask", "ok", "-to", "web:c1", "-opt=A", "-opt", "B", "选哪个"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || got[0] != "A" || got[1] != "B" {
+		t.Fatalf("options = %v, want [A B]", got)
 	}
 }
