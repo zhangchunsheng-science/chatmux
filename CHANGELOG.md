@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.64（对齐循环第 84 轮）
+
+- 配置字段消费守护：`TestConfigFieldsAreConsumed` 反射提取 12 个配置结构体（Config/AgentConfig/ChannelConfig/HTTP/Cron/DocWatch/Oncall/Meeting/Workflow/Form/Transcribe/I18n）的全部字段，逐个以词边界正则扫描配置包之外的非测试源码，断言至少一个消费者；Name/Type 这类到处出现的泛型名豁免（匹配了也证明不了什么）。
+- 动机：baseUrl bug（v0.6.62）就是"文档化了的配置字段被静默无视数月"——这类漂移从此在提交当轮变红，而不是等下一次端到端事故。
+- 首跑审计：16 个特征字段全部在消费，当前零死配置。
+
 ## v0.6.63（对齐循环第 83 轮）
 
 - `chatmux check` 网关探活：agent `baseUrl` 逐个 TCP 探测（相同地址只探一次）——URL 解析失败是 problem（确定性配置错误），TCP 连不上是 warning（服务可能有 check 看不到的隧道，或临时抖动）。拼错网关从"首条消息 404/超时翻车"提前到启动体检；这是 baseUrl 修复（v0.6.62）后的最后一公里：URL 现在真的被使用了，值得在配置期验证它。
