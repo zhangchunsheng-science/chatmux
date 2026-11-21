@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.77（对齐循环第 97 轮）
+
+- 投递可观测收尾——bus 包三补：Close（原泵 goroutine 永生，订阅者也永不关闭；现在 Close 幂等关入端、泵把已缓冲消息排干后关闭全部订阅者，优雅停机序列在 turns 排空后调 b.Close——顺序保证通道先停不会 send-on-closed）、丢弃计数（慢订阅者缓冲满即丢是设计（不阻塞通道读循环），但丢弃原来无任何痕迹；现 chatmux_bus_drops_total 上指标，攀升=路由消化不动、用户消息在悄悄消失；渲染守护自动纳管）、直接测试（bus 包 0→1：扇出/慢订阅丢弃精确计数/Close 排干+订阅者关闭/晚订阅者闭环）。
+- meeting 通知投递失败留痕——handleMeetingEvent 的 sender 查不到或 Send 失败原来静默 return，用户只看到"会议没通知"毫无线索；现两条各记一行日志（这个功能的存在意义就是投递）。
+- 守护：TestBusFanoutBothSubscribersReceive / TestBusDropsSlowSubscriberAndCounts（Publish 同步直调+逐条排空 fast，丢弃数精确 n-64）/ TestBusCloseDrainsThenClosesSubscribers（含二次 Close 幂等）/ TestBusSubscribeAfterClose / TestMeetingAnnounceLogsDeliveryFailure（日志捕获断言 no sender 留痕）。
+- 教训：并发 drain 的"快订阅者"在突发下仍会输给调度（缓冲 64 先满，丢了 11 条）——要确定性就别依赖 goroutine 时序，同步 Publish+逐条排空才稳。
+
 ## v0.6.76（对齐循环第 96 轮）
 
 - check 覆盖收尾——盘点发现四个配置段完全不在校验里：meeting（channel 拼错或半配=VC 通知静默死，handleMeetingEvent 在 sender 查不到时直接 return 无任何日志）、oncall（空 members/坏 anchor 让 Parse 失败，main 静默跳过整个值班通知调度、/oncall 回裸错误；rotation 拼成 "monthly" 静默降级成 daily）、forms（重名前者遮蔽后者、零字段发空卡）、transcribe（baseUrl 拼错=每条语音都打错端点——62 轮修过 agents 的同族问题，语音侧一直没盖）。

@@ -752,6 +752,7 @@ func runServer(cfgPath string) int {
 		time.Sleep(200 * time.Millisecond)
 	}
 	rt.Shutdown()
+	b.Close() // stop the bus pump after turns drained: no channel push panics on a closed inbound
 	ul.Close()
 	if serveErr != nil {
 		fmt.Fprintln(os.Stderr, "http server:", serveErr)
@@ -1037,6 +1038,8 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 			fmt.Sprintf("chatmux_turns_rate_limited_total %d\n", metrics.RateLimitedTurns()))
 		b.WriteString("# HELP chatmux_turn_fallbacks_total Turns re-routed to a fallback agent after primary stream-start failure.\n# TYPE chatmux_turn_fallbacks_total counter\n" +
 			fmt.Sprintf("chatmux_turn_fallbacks_total %d\n", metrics.TurnFallbacks()))
+		b.WriteString("# HELP chatmux_bus_drops_total Messages dropped because a subscriber buffer was full (router can't keep up).\n# TYPE chatmux_bus_drops_total counter\n" +
+			fmt.Sprintf("chatmux_bus_drops_total %d\n", metrics.BusDrops()))
 
 		aggs, err := usage.Summarize(cfg.DataDir)
 		if err == nil {

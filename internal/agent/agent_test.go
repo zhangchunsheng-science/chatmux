@@ -458,6 +458,25 @@ func TestAgentPinBeatsSessionSwitch(t *testing.T) {
 	}
 }
 
+func TestMeetingAnnounceLogsDeliveryFailure(t *testing.T) {
+	// the notifier's whole job is delivery; before v0.6.77 a missing
+	// sender returned silently — "no meeting notices" with no trace
+	cfg := &config.Config{
+		DataDir:      t.TempDir(),
+		Agents:       []config.AgentConfig{{Name: "a", Provider: "openai"}},
+		DefaultAgent: "a",
+		Meeting:      &config.MeetingConfig{Channel: "feishu", ChatID: "oc_x"},
+	}
+	rt := NewRuntime(cfg, provider.NewRegistry(), map[string]channel.Channel{})
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	rt.handleMeetingEvent(channel.Message{Channel: "feishu", Event: "meeting_started", Text: "会开始"})
+	if !strings.Contains(buf.String(), "meeting announce: no sender") {
+		t.Fatalf("missing-sender drop must leave a trace, log = %q", buf.String())
+	}
+}
+
 func TestAgentSwitch(t *testing.T) {
 	rt, key := testRuntime(t)
 	a := &rt.cfg.Agents[0]

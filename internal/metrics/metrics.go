@@ -16,6 +16,7 @@ var (
 	channelRestarts  atomic.Int64
 	turnsRateLimited atomic.Int64
 	turnFallbacks    atomic.Int64
+	busDrops         atomic.Int64
 )
 
 // WatchdogFire records one turn cancelled by the turn-budget watchdog.
@@ -46,6 +47,15 @@ func TurnFallback() { turnFallbacks.Add(1) }
 
 // TurnFallbacks returns turns re-routed to a fallback agent so far.
 func TurnFallbacks() int64 { return turnFallbacks.Load() }
+
+// BusDrop records one inbound message dropped because a subscriber's
+// buffer was full. Steady rate = the router (or a second subscriber)
+// can't keep up and user messages are vanishing — the bus drops rather
+// than blocking a channel read loop, so nothing else will tell you.
+func BusDrop() { busDrops.Add(1) }
+
+// BusDrops returns messages dropped from a full subscriber buffer.
+func BusDrops() int64 { return busDrops.Load() }
 
 // Snapshot returns (watchdog fires, stream retries, channel restarts)
 // since process start.

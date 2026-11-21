@@ -338,7 +338,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
   单点崩溃不再带走整个进程
 - `GET /metrics` — Prometheus 指标：通道健康、活跃会话、在跑 turn/后台任务、
   每 agent 调用数与 token、👍/👎 总量、uptime、看门狗触发数、流启动重试数、
-  通道退避重连数（攀升=凭据失效或上游抖动）；设了 adminToken 则同
+  通道退避重连数（攀升=凭据失效或上游抖动）、总线丢弃数（攀升=路由消化
+  不动，用户消息在悄悄消失）；设了 adminToken 则同
   /admin/* 一样要求 token（header 或 `?token=`，scrape 配置加参即可），
   未设保持开放
 - `GET/POST /admin/status|stop|send|usage` — 管理 API（X-Admin-Token 保护）；
@@ -411,6 +412,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.77（对齐循环第 97 轮）：投递可观测收尾——bus 包三补：Close（泵+订阅者原永生，现排干后干净关闭、停机序列接入）、丢弃计数 chatmux_bus_drops_total（慢订阅满缓冲即丢原无痕迹，攀升=路由消化不动用户消息在消失）、直接测试 0→1（扇出/精确丢弃/Close 排干幂等/晚订阅闭环）；meeting 通知 sender 查不到/Send 失败原静默 return（这功能的存在意义就是投递），现各留一行日志。
+
 v0.6.76（对齐循环第 96 轮）：check 覆盖收尾——meeting/oncall/forms/transcribe 四段原完全不在校验里：meeting channel 拼错=VC 通知静默死；oncall 空 members/坏 anchor 让 main 静默跳过整个值班调度、rotation 拼写静默降级 daily；forms 重名遮蔽；transcribe baseUrl 拼错=每条语音打错端点（62 轮修过 agents 同族）。四段全纳入（problem/warning 语义与 agents 侧一致，探活共用去重表），四组守护测试错必报/对必静默/禁用必零输出。
 
 v0.6.75（对齐循环第 95 轮）：死引用收尾——docwatch 的 `"agent"`（"route override"）原是彻底死字段：装配不读不传，配了静默无视。现兑现承诺：Message 加 Agent 钉住位，agentFor 按名解析（未知/禁用回落正常路由），钉住的 agent 赢过聊天内 /agent 切换；chatmux check 补 `unknown agent` 校验；端到端守护测试锁 precedence。
@@ -420,5 +423,3 @@ v0.6.74（对齐循环第 94 轮）：修真竞态——persistSessions 的游�
 v0.6.73（对齐循环第 93 轮）：排队上限——turn 期间跟进消息的队列原来无上限（限流只拦 turn 启动，排队直通），cron 高频或坏客户端可把队列灌到 RAM 无界，排干 mega-batch 又撑满回放预算让 turn 更慢（死亡螺旋）；现 maxQueuedFollowups=50 封顶，溢出丢弃+每 turn 一次提示（i18n）；守护：60 条灌入恰好 50 入队+提示 1 次。
 
 v0.6.72（对齐循环第 92 轮）：-race 常态化进 CI 的 agent stress 步——真实竞态最常在 2 核+shuffle+重复时序下暴露（正是该步环境），此前只靠偶尔手动审计；本地实测 -race 几乎零代价（54s vs 52s，I/O 时序型测试），CI 时长不变。
-
-v0.6.71（对齐循环第 91 轮）：CLI 子进程按进程组杀——CommandContext 默认只杀直接子进程，claude/gemini 等会再 spawn 孙进程：/stop 或看门狗后孙进程泄漏且占住 stdout 管道；unix 上 Setpgid+kill(-pid) 整组杀、WaitDelay 30s 兜底 setsid 逃逸者，windows 保持默认（build tag 分文件）。守护：marker 孙进程 cancel 后全灭断言，阴性验证禁用组杀即红。
