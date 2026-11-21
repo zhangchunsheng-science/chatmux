@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.60（对齐循环第 80 轮）
+
+- 模型回放预算按 agent 可配：`maxContextChars` 覆盖每轮回放给模型的历史上限（原来硬编码全局 80k 字符）——小上下文模型（4k/8k）在 80k 下照样吃 400，长上下文模型又被冤枉截断。
+- 语义不变：最旧对话先丢、至少保底一轮（trimToBudget 原有 floor）、当前消息永不参与裁剪；负值 check 报 problem，0 走默认。
+- 守护测试：TestHistoryBudget（覆盖解析：nil/零/负值回退默认）+ TestMaxContextCharsOverridesReplayBudget（捕获 provider 实测 300 字符预算把 600 字符历史裁到保底一轮）。
+
 ## v0.6.59（对齐循环第 79 轮）
 
 - 刷屏保护（flood control）：`turnRatePerMinute`（默认 0 不限）给每个会话一个 60 秒滑动窗口，超出封顶的模型 turn 被拒绝——回一句「消息太密集了，歇一分钟再发」（i18n zh/en）并丢弃，一个循环脚本或 webhook 风暴不再能悄悄烧穿 API key。

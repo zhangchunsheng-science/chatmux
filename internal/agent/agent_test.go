@@ -1391,3 +1391,82 @@ func TestTurnRateLimit(t *testing.T) {
 		t.Fatalf("provider calls = %d after /help, still want 2", got)
 	}
 }
+
+func TestHistoryBudget(t *testing.T) {
+	if got := historyBudget(nil); got != 80_000 {
+		t.Errorf("nil agent budget = %d, want default", got)
+	}
+	if got := historyBudget(&config.AgentConfig{}); got != 80_000 {
+		t.Errorf("zero override budget = %d, want default", got)
+	}
+	if got := historyBudget(&config.AgentConfig{MaxContextChars: 6_000}); got != 6_000 {
+		t.Errorf("override budget = %d, want 6000", got)
+	}
+	if got := historyBudget(&config.AgentConfig{MaxContextChars: -5}); got != 80_000 {
+		t.Errorf("negative override budget = %d, want default (check flags it)", got)
+	}
+}
+
+// captureProvider records the request it last served.
+type captureProvider struct {
+	last provider.Request
+	once sync.Once
+	seen chan struct{}
+}
+
+func (c *captureProvider) Name() string { return "openai" }
+func (c *captureProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Delta, error) {
+	c.last = req
+	select {
+	case <-c.seen:
+	default:
+		close(c.seen)
+	}
+	ch := make(chan provider.Delta, 2)
+	go func() { ch <- provider.Delta{Text: "ok"}; close(ch) }()
+	return ch, nil
+}
+
+func TestMaxContextCharsOverridesReplayBudget(t *testing.T) {
+	cfg := &config.Config{
+		DataDir:      t.TempDir(),
+		Agents:       []config.AgentConfig{{Name: "small", Provider: "openai", MaxContextChars: 300}},
+		DefaultAgent: "small",
+	}
+	reg := provider.NewRegistry()
+	cp := &captureProvider{seen: make(chan struct{})}
+	reg.Register(cp)
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+	// seed history: three 100-char-pair exchanges (600 chars total,
+	// over the 300 budget but satisfiable above the one-exchange floor)
+	sess := rt.sessions.Get(key)
+	for _, txt := range []string{"aaaa", "bbbb", "cccc"} {
+		sess.History = append(sess.History,
+			provider.Msg{Role: provider.User, Content: strings.Repeat(txt, 25)},
+			provider.Msg{Role: provider.Assistant, Content: strings.Repeat(txt, 25)})
+	}
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "新问题"})
+	waitContains(t, s, "ok")
+	select {
+	case <-cp.seen:
+	default:
+		t.Fatal("provider never called")
+	}
+	// history replayed (excluding the new user message) must fit 300 chars
+	total := 0
+	for i, m := range cp.last.Messages {
+		if i == len(cp.last.Messages)-1 {
+			continue // current message, never trimmed
+		}
+		total += len(m.Content)
+	}
+	if total > 300 {
+		t.Fatalf("replayed history = %d chars, want <= 300", total)
+	}
+	if total == 0 {
+		t.Fatal("budget floor must keep at least one exchange")
+	}
+}

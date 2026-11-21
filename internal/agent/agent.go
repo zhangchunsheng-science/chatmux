@@ -813,7 +813,7 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	_ = t.sender.React(ctx, msg.ID, "eyes") // thinking indicator, best effort
 
 	sess := r.sessions.Get(key)
-	hist := trimToBudget(append([]provider.Msg(nil), sess.History...), maxHistoryChars)
+	hist := trimToBudget(append([]provider.Msg(nil), sess.History...), historyBudget(t.agent))
 
 	system := firstNonEmpty(sess.System, t.agent.System, defaultSystemPrompt)
 

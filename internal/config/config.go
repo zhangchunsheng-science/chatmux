@@ -156,6 +156,11 @@ type AgentConfig struct {
 	// default. A hung model call or CLI child otherwise blocks its chat
 	// forever. Background jobs get 4× this budget.
 	TurnTimeout string `json:"turnTimeout,omitempty"`
+	// MaxContextChars bounds the history replayed to the model each
+	// turn (chars). 0 uses the global 80k default; small-context
+	// models (4k/8k) should lower it, long-context ones can raise it.
+	// Oldest turns drop first; the current message is never trimmed.
+	MaxContextChars int `json:"maxContextChars,omitempty"`
 }
 
 // Route binds chats to this agent.

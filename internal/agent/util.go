@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/zhangchunsheng-science/chatmux/internal/config"
+
 	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/metrics"
 	"github.com/zhangchunsheng-science/chatmux/internal/provider"
@@ -46,10 +48,21 @@ func saveFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// maxHistoryChars bounds the history replayed to the model each turn: pasted
-// documents can make even a handful of turns exceed the model's context, and
-// the per-pair count cap alone doesn't prevent that. Oldest exchanges go first.
+// maxHistoryChars is the default bound on history replayed to the model
+// each turn: pasted documents can make even a handful of turns exceed the
+// model's context, and the per-pair count cap alone doesn't prevent that.
+// Oldest exchanges go first. Agents can override it (maxContextChars) for
+// small- or long-context models — see historyBudget.
 const maxHistoryChars = 80_000
+
+// historyBudget resolves an agent's replay budget: per-agent
+// maxContextChars when set (>0), the global default otherwise.
+func historyBudget(a *config.AgentConfig) int {
+	if a != nil && a.MaxContextChars > 0 {
+		return a.MaxContextChars
+	}
+	return maxHistoryChars
+}
 
 // trimToBudget drops the oldest messages until the total content size fits
 // the budget, always keeping at least one user/assistant exchange.

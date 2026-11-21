@@ -117,6 +117,9 @@ func Validate(cfg *Config) (problems, warnings []string) {
 				add("agents[%d] %q: bad turnTimeout %q (e.g. \"45m\")", i, a.Name, a.TurnTimeout)
 			}
 		}
+		if a.MaxContextChars < 0 {
+			add("agents[%d] %q: maxContextChars %d is negative (0 uses the 80k default)", i, a.Name, a.MaxContextChars)
+		}
 		// model-key probe: an openai/anthropic agent with neither its
 		// own apiKey nor the provider env var will 401 on every turn at
 		// runtime. Advisory like the dataDir probe: check may run in a
