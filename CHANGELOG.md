@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.65（对齐循环第 85 轮）
+
+- CI 失败注解按 GitHub 每步 ~10 条的存储上限排优先级：原来管道先发射断言块（每块最多 25 行）再发射标识符，v0.6.64 的 agent stress 红被截断得只剩一条裸 "exit code 1"——失败测试名全部丢失，白费一轮盲诊断（本地 6 轮复跑全绿后只能按 46/52 协议空提交重跑）。
+- 现在标识符绝对先行：`--- FAIL:` 测试名 → `FAIL\t包名` → panic → 冒烟 FAIL 步骤；awk 断言块只填剩余槽位。截断发生时先保住"哪个测试在哪个包挂了"。
+- 合成三包失败日志 bash 干跑验证：前 10 条恰好是 2 测试名 + 2 包名 + panic + 2 冒烟步骤 + 3 行断言细节。
+
 ## v0.6.64（对齐循环第 84 轮）
 
 - 配置字段消费守护：`TestConfigFieldsAreConsumed` 反射提取 12 个配置结构体（Config/AgentConfig/ChannelConfig/HTTP/Cron/DocWatch/Oncall/Meeting/Workflow/Form/Transcribe/I18n）的全部字段，逐个以词边界正则扫描配置包之外的非测试源码，断言至少一个消费者；Name/Type 这类到处出现的泛型名豁免（匹配了也证明不了什么）。

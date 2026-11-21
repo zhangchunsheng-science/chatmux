@@ -32,15 +32,23 @@ jobs:
       # via the unauthenticated annotations API) — problem matchers were
       # tried first and their file field must be a capture index, not a
       # literal path; that mistake turned ci red on v0.6.53/v0.6.54.
+      # GitHub stores at most ~10 annotations per step: emit the
+      # IDENTIFIERS first (failing test names, failing packages,
+      # panics, smoke steps) and let assertion-detail blocks fill
+      # whatever slots remain. A cap-truncated stream that lost the
+      # test names cost a blind flake diagnosis on v0.6.64.
       - name: annotate failures
         if: failure()
         run: |
-          { # whole failing-test blocks (headers, assertion output, the
-            # multi-line "got:" payloads) — line-by-line greps lost them
-            awk '/^--- FAIL:|^--- PASS:|^ok\t|^FAIL\t|^PASS/ && blk {blk=0} /^ *--- FAIL:/{blk=1;n=0} blk{print; if(++n>=25)blk=0}' gotest.log stress.log 2>/dev/null || true
-            grep -hE '^FAIL\t|^panic: ' gotest.log stress.log 2>/dev/null || true
+          LOGS="gotest.log stress.log"
+          { # 1) identifiers: test headers, package FAILs, panics
+            grep -hE '^ *--- FAIL: ' $LOGS 2>/dev/null || true
+            grep -hE '^FAIL\t|^panic: ' $LOGS 2>/dev/null || true
             grep -hE '^FAIL: ' smoke.log 2>/dev/null || true
-          } | head -60 | while IFS= read -r l; do
+            # 2) assertion detail: whole failing-test blocks (the
+            # multi-line "got:" payloads), capped per block
+            awk '/^--- FAIL:|^--- PASS:|^ok\t|^FAIL\t|^PASS/ && blk {blk=0} /^ *--- FAIL:/{blk=1;n=0} blk{print; if(++n>=25)blk=0}' $LOGS 2>/dev/null || true
+          } | head -10 | while IFS= read -r l; do
             echo "::error file=go.mod,line=1::${l}"
           done
       - uses: actions/upload-artifact@v4
