@@ -353,3 +353,24 @@ func TestValidateTurnRatePerMinute(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateFallbackAgent(t *testing.T) {
+	base := func(fb string) *Config {
+		return &Config{
+			Agents: []AgentConfig{
+				{Name: "a", Provider: "openai", APIKey: "k", FallbackAgent: fb},
+				{Name: "b", Provider: "anthropic", APIKey: "k"},
+			},
+			HTTP: HTTPConfig{Listen: testListen(t)},
+		}
+	}
+	if p, _ := Validate(base("b")); len(p) != 0 {
+		t.Errorf("valid fallbackAgent flagged: %v", p)
+	}
+	if p, _ := Validate(base("a")); len(p) == 0 {
+		t.Error("self-referential fallbackAgent must be a problem")
+	}
+	if p, _ := Validate(base("ghost")); len(p) == 0 {
+		t.Error("unknown fallbackAgent must be a problem")
+	}
+}

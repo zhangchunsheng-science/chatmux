@@ -1470,3 +1470,74 @@ func TestMaxContextCharsOverridesReplayBudget(t *testing.T) {
 		t.Fatal("budget floor must keep at least one exchange")
 	}
 }
+
+// failProvider errors every stream start (pre-output failure).
+type failProvider struct{ calls atomic.Int32 }
+
+func (f *failProvider) Name() string { return "openai" }
+func (f *failProvider) Stream(_ context.Context, _ provider.Request) (<-chan provider.Delta, error) {
+	f.calls.Add(1)
+	return nil, fmt.Errorf("upstream down")
+}
+
+func TestFallbackAgentAnswersWhenPrimaryDown(t *testing.T) {
+	cfg := &config.Config{
+		DataDir: t.TempDir(),
+		Agents: []config.AgentConfig{
+			{Name: "main", Provider: "openai", FallbackAgent: "backup"},
+			{Name: "backup", Provider: "anthropic"},
+		},
+		DefaultAgent: "main",
+	}
+	reg := provider.NewRegistry()
+	fp := &failProvider{}
+	reg.Register(fp)                       // openai: always down
+	reg.Register(&echoProviderAnthropic{}) // anthropic: echoes
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "救场"})
+	waitContains(t, s, "救场") // echoed by the backup, not a model.fail notice
+	if strings.Contains(s.joined(), "model.fail") && !strings.Contains(s.joined(), "救场") {
+		t.Fatal("primary failure must not surface to the user when the backup answers")
+	}
+}
+
+func TestFallbackChainCappedAndLoopCut(t *testing.T) {
+	cfg := &config.Config{
+		DataDir: t.TempDir(),
+		Agents: []config.AgentConfig{
+			{Name: "a", Provider: "openai", FallbackAgent: "b"},
+			{Name: "b", Provider: "openai", FallbackAgent: "c"},
+			{Name: "c", Provider: "openai", FallbackAgent: "a"}, // loop back to a
+		},
+		DefaultAgent: "a",
+	}
+	reg := provider.NewRegistry()
+	fp := &failProvider{}
+	reg.Register(fp)
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "ping"})
+	// three agents × (1 try + 1 stream-retry) × 2s backoff ≈ 6s before the
+	// final notice — past the stock waitContains window, so poll longer
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(s.joined(), "模型调用失败") {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !strings.Contains(s.joined(), "模型调用失败") {
+		t.Fatalf("final failure notice never arrived; got: %s", s.joined())
+	}
+	// a → b → c, then the 2-hop cap cuts the loop back to a: 3 agent
+	// attempts (2 stream calls each — streamWithRetry retries once)
+	if got := fp.calls.Load(); got != 6 {
+		t.Fatalf("provider attempts = %d, want 6 (chain cap must cut the loop)", got)
+	}
+}
+
+// echoProviderAnthropic is the echo behavior on the anthropic name so a
+// config can mix providers in one registry.
+type echoProviderAnthropic struct{ echoProvider }
+
+func (e *echoProviderAnthropic) Name() string { return "anthropic" }

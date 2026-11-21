@@ -120,6 +120,15 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		if a.MaxContextChars < 0 {
 			add("agents[%d] %q: maxContextChars %d is negative (0 uses the 80k default)", i, a.Name, a.MaxContextChars)
 		}
+		if a.FallbackAgent != "" {
+			if a.FallbackAgent == a.Name {
+				add("agents[%d] %q: fallbackAgent must name a different agent, not itself", i, a.Name)
+			} else if !agentExists(cfg, a.FallbackAgent) {
+				add("agents[%d] %q: fallbackAgent %q does not match any agent", i, a.Name, a.FallbackAgent)
+			} else if agentIsCLI(cfg, a.FallbackAgent) {
+				add("agents[%d] %q: fallbackAgent %q is a CLI agent (fallback speaks API only)", i, a.Name, a.FallbackAgent)
+			}
+		}
 		// model-key probe: an openai/anthropic agent with neither its
 		// own apiKey nor the provider env var will 401 on every turn at
 		// runtime. Advisory like the dataDir probe: check may run in a
@@ -251,4 +260,22 @@ func loopbackListen(listen string) bool {
 		return true
 	}
 	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+func agentExists(cfg *Config, name string) bool {
+	for i := range cfg.Agents {
+		if cfg.Agents[i].Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func agentIsCLI(cfg *Config, name string) bool {
+	for i := range cfg.Agents {
+		if cfg.Agents[i].Name == name {
+			return cfg.Agents[i].Cli != nil
+		}
+	}
+	return false
 }

@@ -394,8 +394,13 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - 回放预算：agent 级 `maxContextChars`（默认全局 80000 字符）——每轮回放给
   模型的历史上限，小上下文模型（4k/8k）调小避免 400，长上下文模型调大；
   最旧对话先丢、至少保底一轮、当前消息永不参与裁剪
+- 热备链：agent 级 `fallbackAgent`——主模型流启动失败（尚无输出）时自动换
+  备用 agent 重试同一 turn，模型宕机/额度烧穿时 bot 依旧应答；链深 2 跳
+  封顶，CLI agent 不作目标，取消不回退
 
 ## 状态
+
+v0.6.61（对齐循环第 81 轮）：agent 热备链——fallbackAgent 在主模型流启动失败（尚无任何输出）时自动换备用 agent 重试同一 turn，主模型宕机/额度烧穿不再让 bot 静默；只限启动失败（半截输出不重试）、取消不回退（/stop 必须赢）、链深 2 跳封顶（环被切断）、CLI agent 不作目标；check 对自指/未知/CLI 目标报 problem。守护测试：备用接住主故障（用户无感）+ 三 agent 环链实测 6 次调用封顶。
 
 v0.6.60（对齐循环第 80 轮）：模型回放预算可配——maxContextChars 按 agent 覆盖历史回放上限（默认全局 80k 字符），小上下文模型（4k/8k）调小防 400，长上下文模型调大不冤枉截断；最旧对话先丢、保底一轮、当前消息永不裁；check 负值报 problem，README 部署节补文档。守护测试：预算解析纯函数 + 捕获 provider 实测 300 字符预算下回放被裁到 ≤300 且保底一轮仍在。
 
@@ -413,11 +418,5 @@ dedup/cli-sessions/schedules）原来共用固定 `<path>.tmp`，每轮 turn 异
 并发时两个 goroutine 交错写同一临时文件再 rename，损坏的 sessions.json 被
 Load 静默吞掉=全部对话蒸发且无报错。收敛到 internal/atomicfile（唯一临时名），
 并发撕裂测试（4 写者+热读者，损坏即败）+ 并发 Save 回归守护。
-
-v0.6.55（对齐循环第 75 轮）：CI 注解方案返工——problem matcher 的 file 字段
-必须是捕获组索引而非字面路径，"file": "go.mod" 让 add-matcher 直接报错、
-v0.6.53/54 的 ci 连带红（release 不受影响，双绿且资产齐全）。改用 tee 日志 +
-失败时 `::error file=go.mod,line=1::` 工作流命令直发注解（无需 matcher、
-匿名注解 API 可读），本地干跑四类失败行全捕获。
 
 MIT

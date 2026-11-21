@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.61（对齐循环第 81 轮）
+
+- agent 热备链（hot backup）：`fallbackAgent` 在主模型流启动失败时自动换备用 agent 重试同一 turn——此前主模型 API 宕机或额度烧穿，bot 只会回一句失败，现在配一个独立 provider 的备用 agent 即可无感接住。
+- 边界收紧：只限尚无输出的启动失败（半截回复不重发防重复）；ctx 取消后绝不回退（/stop 必须赢）；链深 2 跳封顶，A→B→A 环被切断；CLI agent 不作回退目标（回退路径只走 API）。
+- 失败尝试照旧落 usage（/insight 可见主备都试过），守护测试：主故障备用接住（用户看不到 model.fail）+ 三 agent 环链实测恰好 6 次流调用（3 agent × 启动重试一次）证明环被切断。
+- `chatmux check` 对 fallbackAgent 自指/未知名字/CLI 目标报 problem。
+
 ## v0.6.60（对齐循环第 80 轮）
 
 - 模型回放预算按 agent 可配：`maxContextChars` 覆盖每轮回放给模型的历史上限（原来硬编码全局 80k 字符）——小上下文模型（4k/8k）在 80k 下照样吃 400，长上下文模型又被冤枉截断。

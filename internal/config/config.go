@@ -161,6 +161,11 @@ type AgentConfig struct {
 	// models (4k/8k) should lower it, long-context ones can raise it.
 	// Oldest turns drop first; the current message is never trimmed.
 	MaxContextChars int `json:"maxContextChars,omitempty"`
+	// FallbackAgent names another (API) agent to retry on when this
+	// one's model call fails to start — a hot backup on an independent
+	// provider keeps the bot answering through outages. Followed up to
+	// 2 hops (loops are cut); only pre-output start failures qualify.
+	FallbackAgent string `json:"fallbackAgent,omitempty"`
 }
 
 // Route binds chats to this agent.

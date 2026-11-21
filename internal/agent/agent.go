@@ -59,13 +59,14 @@ type Runtime struct {
 
 // turn is one in-flight model call for a chat.
 type turn struct {
-	cancel  context.CancelFunc
-	done    chan struct{}
-	agent   *config.AgentConfig
-	sender  channel.Sender
-	started time.Time
-	queued  []provider.Msg // follow-ups arrived mid-turn
-	nudged  bool           // "queued" ack sent once per turn, not per message
+	cancel        context.CancelFunc
+	done          chan struct{}
+	agent         *config.AgentConfig
+	sender        channel.Sender
+	started       time.Time
+	queued        []provider.Msg // follow-ups arrived mid-turn
+	nudged        bool           // "queued" ack sent once per turn, not per message
+	fallbackDepth int            // agent hops already tried (fallback chain cap)
 }
 
 // bgJob is a detached long-running task: the chat stays usable while it
@@ -838,7 +839,6 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 	start := time.Now()
 	stream, err := streamWithRetry(ctx, prov, req)
 	if err != nil {
-		_, _ = t.sender.Send(ctx, r.say("model.fail", err.Error()), channel.SendOptions{Final: true})
 		// failed calls are usage too: /insight and the dashboard must
 		// see attempts that never produced a reply
 		r.usage.Log(usage.Record{
@@ -848,6 +848,20 @@ func (r *Runtime) runTurn(ctx context.Context, key session.Key, t *turn, msg cha
 			Error:      err.Error(),
 		})
 		logTurn(t.agent, model, msg, start, 0, 0, 0, err.Error())
+		// hot backup: retry the same turn on the fallback agent before
+		// telling the user. Only pre-output start failures qualify (no
+		// partial reply exists), and never after a cancel (/stop must
+		// win). Chain depth is capped, so loops are cut.
+		if fb := r.fallbackFor(t); fb != nil && ctx.Err() == nil {
+			log.Printf("turn fallback: %s/%s agent=%s failed at stream start (%v) — retrying on agent=%s",
+				key.Channel, key.ChatID, t.agent.Name, err, fb.Name)
+			t2 := *t
+			t2.agent = fb
+			t2.fallbackDepth = t.fallbackDepth + 1
+			r.runTurn(ctx, key, &t2, msg, resultPrefix)
+			return
+		}
+		_, _ = t.sender.Send(ctx, r.say("model.fail", err.Error()), channel.SendOptions{Final: true})
 		return
 	}
 
@@ -1539,6 +1553,21 @@ func (r *Runtime) agentByName(name string) *config.AgentConfig {
 		}
 	}
 	return nil
+}
+
+// fallbackFor resolves the next hop of a failing turn's backup chain,
+// or nil when there is no usable one: unset name, unknown agent,
+// self-reference, CLI targets (the fallback path speaks API only),
+// or the 2-hop depth cap (which also cuts A→B→A loops).
+func (r *Runtime) fallbackFor(t *turn) *config.AgentConfig {
+	if t.fallbackDepth >= 2 || t.agent.FallbackAgent == "" {
+		return nil
+	}
+	fb := r.agentByName(t.agent.FallbackAgent)
+	if fb == nil || fb.Name == t.agent.Name || fb.Cli != nil {
+		return nil
+	}
+	return fb
 }
 
 // mentionAllowed: p2p always; groups require an @ unless the agent
