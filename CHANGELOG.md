@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.71（对齐循环第 91 轮）
+
+- CLI 子进程按进程组杀：exec.CommandContext 默认只 SIGKILL 直接子进程，而 CLI agent（claude/gemini/…）都会再 spawn 孙进程——/stop 或 turn 看门狗触发后孙进程存活泄漏，还占着继承的 stdout 管道。unix 上 Setpgid + Cancel 改为 kill(-pid)（整组 SIGKILL，ESRCH 容错）；windows 无跨二进制进程组，保持默认 Kill（build tag 分文件）。
+- cmd.WaitDelay=30s 兜底逃出进程组的后代（daemonize/setsid 的）：进程死后管道被强收，Wait 和 stdout 扫描不再可能被永久占住。
+- 守护：TestCancelKillsProcessGroup——脚本 spawn 带 marker 的孙进程并 wait 它（模拟 CLI 带守护子进程），cancel 后断言 events 关闭 + 孙进程消失。阴性验证过：禁用组杀后测试红（孙进程存活、管道占 10s）。教训两条进测试本体：pgrep 断言前先 pkill 预清理（上轮泄漏会假红）；阴性检查泄漏的孙进程要当场清掉再复验。
+- windows/arm64 交叉编译验证通过（SysProcAttr 隔离在 build tag 文件里）。
+
 ## v0.6.70（对齐循环第 90 轮）
 
 - 附件下载每取有界：图像路径（attachImages 的 downloader 分支）原来裸用 turn ctx——上界只有 turnTimeout（默认 30m、后台 4×），一个卡死的媒体主机能把整个 turn 和它的会话占满半小时；语音路径其实早就有 5 分钟兜底，两条路径不对称。现在收敛为 attachmentDownloadTimeout（5 分钟，测试可收窄）统一覆盖：图像下载、音频下载×2、转写 HTTP 调用四个点。

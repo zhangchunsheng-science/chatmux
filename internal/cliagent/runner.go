@@ -279,6 +279,11 @@ func (r *Runner) Run(ctx context.Context, cfg Config, anchor, prompt string) (<-
 	}
 
 	cmd := exec.CommandContext(ctx, bin, args...)
+	setupProcGroup(cmd)
+	// belt for descendants that escaped the group (daemonized, setsid):
+	// give up on inherited pipes after the process is gone, so Wait and
+	// the stdout scanner can't be held open forever
+	cmd.WaitDelay = 30 * time.Second
 	if cfg.WorkingDir != "" {
 		cmd.Dir = cfg.WorkingDir
 	}
