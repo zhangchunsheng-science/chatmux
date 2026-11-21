@@ -406,6 +406,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.74（对齐循环第 94 轮）：修真竞态——persistSessions 的游离 Save goroutine 可活过 Shutdown 同步快照，在测试 TempDir 清理后才落地（directory not empty）；正是 57/64/66 轮三次同名 flake 的真面目，被 92 轮 -race+85 轮注解优先组合翻出。修法：persistWG 等齐异步快照再落权威版，退出路径同受益。
+
 v0.6.73（对齐循环第 93 轮）：排队上限——turn 期间跟进消息的队列原来无上限（限流只拦 turn 启动，排队直通），cron 高频或坏客户端可把队列灌到 RAM 无界，排干 mega-batch 又撑满回放预算让 turn 更慢（死亡螺旋）；现 maxQueuedFollowups=50 封顶，溢出丢弃+每 turn 一次提示（i18n）；守护：60 条灌入恰好 50 入队+提示 1 次。
 
 v0.6.72（对齐循环第 92 轮）：-race 常态化进 CI 的 agent stress 步——真实竞态最常在 2 核+shuffle+重复时序下暴露（正是该步环境），此前只靠偶尔手动审计；本地实测 -race 几乎零代价（54s vs 52s，I/O 时序型测试），CI 时长不变。
@@ -415,7 +417,5 @@ v0.6.71（对齐循环第 91 轮）：CLI 子进程按进程组杀——CommandC
 v0.6.70（对齐循环第 90 轮）：附件下载每取有界——图像路径原来裸用 turn ctx（上界仅 turnTimeout 30m），卡死媒体主机可把整个 turn 和会话占满半小时，而语音路径早有 5 分钟兜底（不对称）；现收敛 attachmentDownloadTimeout 统一覆盖图像/音频×2/转写四个点，超时后图像回退公开 URL 给视觉模型。守护：wedgeDLChannel 卡死桩（无字节直到 deadline）限时返回 + URL 回退断言。
 
 v0.6.69（对齐循环第 89 轮）：服务端慢客户端收口——网关 http.Server 原来零超时（Gosec G114），不完成请求的开放连接可永久占 fd（slowloris）；现 ReadHeaderTimeout 10s/ReadTimeout 60s/IdleTimeout 120s。WriteTimeout 刻意不设：/admin/ask 按调用方 timeoutSec 合法长阻塞，固定写超时会切断正当慢问（handler 各自有界）；守护测试钉住三值 + WriteTimeout 必须为 0。
-
-v0.6.68（对齐循环第 88 轮）：CLI 出口全面有界——86 轮给 fleet 补的超时在主客户端同样缺失：chatmux status/stop/send/ask 的 adminReq 原来零 deadline（ask 提示语写着 Ctrl-C 放弃，把挂死当功能），现 status/stop/send 30s、ask=-timeout+30s 缓冲（与 fleet 共用超时变量）；chatmux update 包 5 分钟兜底；MCP chatmux_ask 同款（timeoutSec+30s）。顺带修 ask -opt=A 等号形式被静默丢弃（flag.Func）。守护：adminReq/runClient/MCP 三层挂死限时失败 + -opt 双形式载荷。
 
 MIT

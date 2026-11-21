@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.74（对齐循环第 94 轮）
+
+- 修 v0.6.73 CI 暴露的真竞态（92 轮 -race + 85 轮注解优先的回报）：TestBusyAndShutdownDrain 两连挂，真实断言是 TempDir RemoveAll "directory not empty"——persistSessions 的 fire-and-forget Save goroutine 可活过 close(t.done)、活过 Shutdown 的同步 Save，在测试收尾清理目录后才落地。这也正是 57/64/66 轮三次同名"flake"的真面目（当时注解坏，只见 0.00s 失败被当 runner 抖动放掉）。
+- 修法：Runtime.persistWG（WaitGroup）跟踪异步快照，Shutdown 先 Wait 再落权威快照——进程退出路径也受益（不再有游离写与退出赛跑）。
+- 本地复现不出来（定向 20×/CI 同款全绿，纯时序窗口），修复由代码检视证明 + CI 的 -race stress 步做回归守护；负样本就是 v0.6.73 的 CI 失败本身。
+
 ## v0.6.73（对齐循环第 93 轮）
 
 - 排队上限：turn 期间跟进消息的 t.queued 原来无上限——限流只拦 turn 启动，排队消息直通 Handle；一条长 turn 期间（cron 高频触发 or 坏客户端灌消息）队列无限涨。两层伤害：RAM 无界（web 控制台单条可 64KB），排干时 mega-batch 撑满模型回放预算 → turn 更慢 → 队列更深，死亡螺旋。

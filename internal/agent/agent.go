@@ -50,11 +50,12 @@ type Runtime struct {
 	schedCtx   context.Context
 	userScheds []userSchedule // /schedule-managed, persisted
 
-	mu      sync.Mutex
-	turns   map[session.Key]*turn   // in-flight turn per chat
-	jobs    map[string]*bgJob       // background jobs by id (bg-N)
-	jobSeq  int                     // bg job id sequence
-	rateWin map[session.Key][]int64 // per-chat turn starts (unix ns) in the last 60s
+	mu        sync.Mutex
+	turns     map[session.Key]*turn   // in-flight turn per chat
+	jobs      map[string]*bgJob       // background jobs by id (bg-N)
+	jobSeq    int                     // bg job id sequence
+	rateWin   map[session.Key][]int64 // per-chat turn starts (unix ns) in the last 60s
+	persistWG sync.WaitGroup          // in-flight async session snapshots
 }
 
 // turn is one in-flight model call for a chat.
@@ -141,15 +142,22 @@ func (r *Runtime) persistSessions() {
 	if r.dataDir == "" {
 		r.dataDir = "data"
 	}
-	go func() { _ = r.sessions.Save(r.dataDir) }()
+	r.persistWG.Add(1)
+	go func() {
+		defer r.persistWG.Done()
+		_ = r.sessions.Save(r.dataDir)
+	}()
 }
 
 // Shutdown persists state for a clean restart. Synchronous, unlike the
-// per-turn async snapshots: the caller is about to exit.
+// per-turn async snapshots: the caller is about to exit — and it waits
+// for those snapshots first, so no straggler write lands after (or
+// races) the authoritative save.
 func (r *Runtime) Shutdown() {
 	if r.dataDir == "" {
 		r.dataDir = "data"
 	}
+	r.persistWG.Wait()
 	_ = r.sessions.Save(r.dataDir)
 }
 
