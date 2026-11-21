@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.73（对齐循环第 93 轮）
+
+- 排队上限：turn 期间跟进消息的 t.queued 原来无上限——限流只拦 turn 启动，排队消息直通 Handle；一条长 turn 期间（cron 高频触发 or 坏客户端灌消息）队列无限涨。两层伤害：RAM 无界（web 控制台单条可 64KB），排干时 mega-batch 撑满模型回放预算 → turn 更慢 → 队列更深，死亡螺旋。
+- 现在 maxQueuedFollowups=50 封顶：溢出丢弃 + 每 turn 一次「排队消息太多」提示（i18n zh/en，键校验自动纳管）；/stop 等命令不受影响（命令不走队列）。
+- 守护：TestQueuedFollowupsCapped——blockingProvider 压住 turn，灌 60 条断言恰好 50 入队 + 提示恰好 1 次。
+- 教训：给已解锁路径加分支时先看锁的归属——busy 分支开头就 r.mu.Unlock() 了，新分支里再 Unlock 直接 fatal error: unlock of unlocked mutex。
+
 ## v0.6.72（对齐循环第 92 轮）
 
 - -race 常态化进 CI 的 agent stress 步：此前竞态检测只靠偶尔手动全量审计（v0.6.24/36/42 后没进 CI），真实竞态最常在 2 核 + shuffle + 重复时序下暴露——正是这个步骤的环境。本地实测 -race 几乎零代价（54s vs 52s，测试多为 I/O 时序型非 CPU 型），CI 时长不受影响。

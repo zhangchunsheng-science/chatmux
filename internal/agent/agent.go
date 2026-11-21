@@ -59,14 +59,15 @@ type Runtime struct {
 
 // turn is one in-flight model call for a chat.
 type turn struct {
-	cancel        context.CancelFunc
-	done          chan struct{}
-	agent         *config.AgentConfig
-	sender        channel.Sender
-	started       time.Time
-	queued        []provider.Msg // follow-ups arrived mid-turn
-	nudged        bool           // "queued" ack sent once per turn, not per message
-	fallbackDepth int            // agent hops already tried (fallback chain cap)
+	cancel         context.CancelFunc
+	done           chan struct{}
+	agent          *config.AgentConfig
+	sender         channel.Sender
+	started        time.Time
+	queued         []provider.Msg // follow-ups arrived mid-turn
+	nudged         bool           // "queued" ack sent once per turn, not per message
+	overflowNudged bool           // queue-full notice sent once per turn
+	fallbackDepth  int            // agent hops already tried (fallback chain cap)
 }
 
 // bgJob is a detached long-running task: the chat stays usable while it
@@ -172,6 +173,12 @@ const defaultTurnTimeout = 30 * time.Minute
 // even on a badly throttled link. Var so tests can shrink it.
 var attachmentDownloadTimeout = 5 * time.Minute
 
+// maxQueuedFollowups caps follow-up messages held while a turn runs. The
+// queue is RAM (it was unbounded), and a drained mega-batch floods the
+// model's replay budget, making turns slower and the queue deeper — a
+// death spiral a fast cron entry or a broken client can start.
+const maxQueuedFollowups = 50
+
 // turnBudget resolves the agent's TurnTimeout (fallback default).
 func turnBudget(a *config.AgentConfig) time.Duration {
 	d := defaultTurnTimeout
@@ -241,6 +248,20 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 					return
 				}
 			}
+		}
+		if len(t.queued) >= maxQueuedFollowups {
+			// overflow: drop the message and say so once — the queue is
+			// RAM (uncapped before), and a drained mega-batch floods the
+			// model context, making turns slower and the queue deeper
+			if !t.overflowNudged {
+				t.overflowNudged = true
+				if s, err := r.senderFor(msg); err == nil {
+					go func() {
+						_, _ = s.Send(context.Background(), r.say("queuefull"), channel.SendOptions{})
+					}()
+				}
+			}
+			return
 		}
 		t.queued = append(t.queued, provider.Msg{
 			Role: provider.User, Content: msg.Text, Name: msg.UserName,

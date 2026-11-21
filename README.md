@@ -406,6 +406,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.73（对齐循环第 93 轮）：排队上限——turn 期间跟进消息的队列原来无上限（限流只拦 turn 启动，排队直通），cron 高频或坏客户端可把队列灌到 RAM 无界，排干 mega-batch 又撑满回放预算让 turn 更慢（死亡螺旋）；现 maxQueuedFollowups=50 封顶，溢出丢弃+每 turn 一次提示（i18n）；守护：60 条灌入恰好 50 入队+提示 1 次。
+
 v0.6.72（对齐循环第 92 轮）：-race 常态化进 CI 的 agent stress 步——真实竞态最常在 2 核+shuffle+重复时序下暴露（正是该步环境），此前只靠偶尔手动审计；本地实测 -race 几乎零代价（54s vs 52s，I/O 时序型测试），CI 时长不变。
 
 v0.6.71（对齐循环第 91 轮）：CLI 子进程按进程组杀——CommandContext 默认只杀直接子进程，claude/gemini 等会再 spawn 孙进程：/stop 或看门狗后孙进程泄漏且占住 stdout 管道；unix 上 Setpgid+kill(-pid) 整组杀、WaitDelay 30s 兜底 setsid 逃逸者，windows 保持默认（build tag 分文件）。守护：marker 孙进程 cancel 后全灭断言，阴性验证禁用组杀即红。
@@ -415,7 +417,5 @@ v0.6.70（对齐循环第 90 轮）：附件下载每取有界——图像路径
 v0.6.69（对齐循环第 89 轮）：服务端慢客户端收口——网关 http.Server 原来零超时（Gosec G114），不完成请求的开放连接可永久占 fd（slowloris）；现 ReadHeaderTimeout 10s/ReadTimeout 60s/IdleTimeout 120s。WriteTimeout 刻意不设：/admin/ask 按调用方 timeoutSec 合法长阻塞，固定写超时会切断正当慢问（handler 各自有界）；守护测试钉住三值 + WriteTimeout 必须为 0。
 
 v0.6.68（对齐循环第 88 轮）：CLI 出口全面有界——86 轮给 fleet 补的超时在主客户端同样缺失：chatmux status/stop/send/ask 的 adminReq 原来零 deadline（ask 提示语写着 Ctrl-C 放弃，把挂死当功能），现 status/stop/send 30s、ask=-timeout+30s 缓冲（与 fleet 共用超时变量）；chatmux update 包 5 分钟兜底；MCP chatmux_ask 同款（timeoutSec+30s）。顺带修 ask -opt=A 等号形式被静默丢弃（flag.Func）。守护：adminReq/runClient/MCP 三层挂死限时失败 + -opt 双形式载荷。
-
-v0.6.67（对齐循环第 87 轮）：回退跳上指标——fallbackAgent（v0.6.61）触发后此前只有 daemon 日志一行，watchdog/流重试/限流/通道重连四族都有指标唯独它没有；chatmux_turn_fallbacks_total 进 /metrics（渲染守护自动纳管），攀升=主 agent 网关挂了、bot 靠备胎在答。守护：回退测试加指标增量断言 + 冒烟阶段 3 补计数断言。盘点引用上下文：Quoted 生产者 4/6 通道，钉钉 SDK 回调模型与企微回调 XML 均无引用字段（平台边界，README 已注记）。
 
 MIT

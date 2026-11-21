@@ -1585,3 +1585,54 @@ func TestAttachImagesDownloadTimeout(t *testing.T) {
 		t.Fatalf("failed download must fall back to the public URL, got %v", out.Images)
 	}
 }
+
+// TestQueuedFollowupsCapped pins the overflow bound: follow-ups arriving
+// mid-turn queue up to maxQueuedFollowups and no further — the queue is
+// RAM (unbounded before), and a drained mega-batch floods the model's
+// replay budget. Overflow drops with a single notice per turn.
+func TestQueuedFollowupsCapped(t *testing.T) {
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "helper", Provider: "openai"}},
+		DefaultAgent: "helper",
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&blockingProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "慢任务"})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rt.mu.Lock()
+		_, busy := rt.turns[key]
+		rt.mu.Unlock()
+		if busy {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	t0, busy := rt.turns[key]
+	rt.mu.Unlock()
+	if !busy {
+		t.Fatal("turn not in flight")
+	}
+
+	for i := 0; i < maxQueuedFollowups+10; i++ {
+		rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: fmt.Sprintf("跟话%d", i)})
+	}
+	rt.mu.Lock()
+	qlen := len(t0.queued)
+	rt.mu.Unlock()
+	if qlen != maxQueuedFollowups {
+		t.Fatalf("queued = %d, want capped at %d", qlen, maxQueuedFollowups)
+	}
+	waitContains(t, s, "排队消息太多")
+	if n := strings.Count(s.joined(), "排队消息太多"); n != 1 {
+		t.Fatalf("queue-full notice sent %d times, want exactly 1", n)
+	}
+	t0.cancel()
+	<-t0.done
+}

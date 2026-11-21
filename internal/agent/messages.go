@@ -10,6 +10,7 @@ type dict map[string]string
 var zh = dict{
 	"queued":              "已收到，正在处理上一条；再发 /stop 可打断当前任务，/bg 可丢后台。",
 	"ratelimited":         "消息太密集了，歇一分钟再发。",
+	"queuefull":           "排队消息太多，先消化一会儿再发。",
 	"stop.fg":             "已请求打断当前任务。",
 	"stop.fg.none":        "当前没有在处理的前台任务。",
 	"stop.bg.done":        "已停止 %d 个后台任务。",
@@ -137,6 +138,7 @@ var zh = dict{
 var en = dict{
 	"queued":              "Got it — still working on the previous message; /stop interrupts, /bg detaches.",
 	"ratelimited":         "Too many messages — give it a minute before sending again.",
+	"queuefull":           "Too many queued messages — let me catch up first.",
 	"stop.fg":             "Interrupt requested.",
 	"stop.fg.none":        "No foreground task running.",
 	"stop.bg.done":        "Stopped %d background job(s).",
