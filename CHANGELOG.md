@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.76（对齐循环第 96 轮）
+
+- check 覆盖收尾——盘点发现四个配置段完全不在校验里：meeting（channel 拼错或半配=VC 通知静默死，handleMeetingEvent 在 sender 查不到时直接 return 无任何日志）、oncall（空 members/坏 anchor 让 Parse 失败，main 静默跳过整个值班通知调度、/oncall 回裸错误；rotation 拼成 "monthly" 静默降级成 daily）、forms（重名前者遮蔽后者、零字段发空卡）、transcribe（baseUrl 拼错=每条语音都打错端点——62 轮修过 agents 的同族问题，语音侧一直没盖）。
+- 校验语义：meeting/oncall 的 channel 按 channels[] 查、配 channel 缺 chatId（及反向）都报 problem；oncall 空 members/坏 anchor（YYYY-MM-DD）/rotation 拼写报 problem（镜像 oncall.Parse 的报错文案；不能直接调它——oncall 依赖 config 会成环）；纯查询型 oncall（不配通知 channel）合法零输出；forms 重名/零字段报 problem；transcribe baseUrl 解析失败 problem、TCP 探活（与 agents 共用去重表）不可达 warning、无任何 key（自带 apiKey 或 OPENAI_API_KEY）warning、未启用零输出。
+- 守护：TestValidateMeeting / TestValidateOncall / TestValidateForms / TestValidateTranscribe（四象限：错必报、对必静默、禁用必零输出；transcribe 用解析失败 URL 走确定性路径不碰网络）。
+
 ## v0.6.75（对齐循环第 95 轮）
 
 - 死引用收尾——盘点 config 全部 Agent 交叉引用：defaultAgent / workflows.agent / steps[].agent / fallbackAgent 均有校验，唯独 docwatch 的 `"agent"`（config 里注明 "route override"）是彻底死字段：docwatch 不读它、main 装配不传它、channel.Message 没有承载它的位——用户配了就静默无视（baseUrl bug 的同款漂移，恰好漏在 consumed 守护的 `\bAgent\b` 太泛匹配之外）。

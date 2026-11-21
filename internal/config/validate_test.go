@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zhangchunsheng-science/chatmux/internal/channel"
 	"github.com/zhangchunsheng-science/chatmux/internal/cliagent"
 )
 
@@ -88,6 +89,124 @@ func TestValidateDocwatchAgent(t *testing.T) {
 	problems, _ := Validate(cfg)
 	if len(problems) != 1 || !strings.Contains(problems[0], `unknown agent "ghost"`) {
 		t.Fatalf("problems = %v, want one unknown-agent finding for docwatch[0]", problems)
+	}
+}
+
+func TestValidateMeeting(t *testing.T) {
+	base := func(m *MeetingConfig) *Config {
+		return &Config{
+			Channels: []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{}`)}},
+			Agents:   []AgentConfig{{Name: "a", APIKey: "k"}},
+			HTTP:     HTTPConfig{Listen: testListen(t)},
+			Meeting:  m,
+		}
+	}
+	problems, _ := Validate(base(&MeetingConfig{Channel: "ghost", ChatID: "c1"}))
+	if len(problems) != 1 || !strings.Contains(problems[0], `unknown channel "ghost"`) {
+		t.Fatalf("meeting unknown channel: problems = %v", problems)
+	}
+	problems, _ = Validate(base(&MeetingConfig{Channel: "fs"}))
+	if len(problems) != 1 || !strings.Contains(problems[0], "chatId is required") {
+		t.Fatalf("meeting half-set: problems = %v", problems)
+	}
+	problems, _ = Validate(base(&MeetingConfig{ChatID: "c1"}))
+	if len(problems) != 1 || !strings.Contains(problems[0], "channel is required") {
+		t.Fatalf("meeting chatId-only: problems = %v", problems)
+	}
+	problems, _ = Validate(base(&MeetingConfig{Channel: "fs", ChatID: "c1"}))
+	if len(problems) != 0 {
+		t.Fatalf("valid meeting should be silent, got %v", problems)
+	}
+}
+
+func TestValidateOncall(t *testing.T) {
+	base := func(o *OncallConfig) *Config {
+		return &Config{
+			Channels: []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{}`)}},
+			Agents:   []AgentConfig{{Name: "a", APIKey: "k"}},
+			HTTP:     HTTPConfig{Listen: testListen(t)},
+			Oncall:   o,
+		}
+	}
+	problems, _ := Validate(base(&OncallConfig{Rotation: "weekly"}))
+	if len(problems) != 1 || !strings.Contains(problems[0], "members is empty") {
+		t.Fatalf("oncall empty members: problems = %v", problems)
+	}
+	problems, _ = Validate(base(&OncallConfig{Members: []string{"a"}, Anchor: "2026-13-45"}))
+	if len(problems) != 1 || !strings.Contains(problems[0], "bad anchor") {
+		t.Fatalf("oncall bad anchor: problems = %v", problems)
+	}
+	problems, _ = Validate(base(&OncallConfig{Members: []string{"a"}, Rotation: "monthly", Channel: "ghost", ChatID: "c1"}))
+	if len(problems) != 2 {
+		t.Fatalf("oncall typo rotation + unknown channel: problems = %v", problems)
+	}
+	// valid full wiring is silent; query-only (no channel) is a legal setup
+	problems, _ = Validate(base(&OncallConfig{Members: []string{"a", "b"}, Rotation: "weekly", Anchor: "2026-01-01"}))
+	if len(problems) != 0 {
+		t.Fatalf("valid oncall should be silent, got %v", problems)
+	}
+}
+
+func TestValidateForms(t *testing.T) {
+	base := func(f []FormConfig) *Config {
+		return &Config{
+			Channels: []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{}`)}},
+			Agents:   []AgentConfig{{Name: "a", APIKey: "k"}},
+			HTTP:     HTTPConfig{Listen: testListen(t)},
+			Forms:    f,
+		}
+	}
+	problems, _ := Validate(base([]FormConfig{
+		{Name: "bug", Fields: []channel.FormField{{Name: "n", Label: "N"}}},
+		{Name: "bug", Fields: []channel.FormField{{Name: "n", Label: "N"}}},
+		{Name: "empty"},
+	}))
+	if len(problems) != 2 {
+		t.Fatalf("forms dup + empty: problems = %v", problems)
+	}
+	if !strings.Contains(problems[0], `duplicate name`) || !strings.Contains(problems[1], "no fields") {
+		t.Fatalf("forms findings in wrong order/content: %v", problems)
+	}
+	problems, _ = Validate(base([]FormConfig{{Name: "bug", Fields: []channel.FormField{{Name: "n", Label: "N"}}}}))
+	if len(problems) != 0 {
+		t.Fatalf("valid form should be silent, got %v", problems)
+	}
+}
+
+func TestValidateTranscribe(t *testing.T) {
+	base := func(tr *TranscribeConfig) *Config {
+		return &Config{
+			Channels:   []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{}`)}},
+			Agents:     []AgentConfig{{Name: "a", APIKey: "k"}},
+			HTTP:       HTTPConfig{Listen: testListen(t)},
+			Transcribe: tr,
+		}
+	}
+	t.Setenv("OPENAI_API_KEY", "")
+	// parse-fail baseUrl is a deterministic problem, no network needed
+	problems, _ := Validate(base(&TranscribeConfig{Enabled: true, BaseURL: "http://[::1]:namedport"}))
+	if len(problems) != 1 || !strings.Contains(problems[0], "does not parse") {
+		t.Fatalf("transcribe bad baseUrl: problems = %v", problems)
+	}
+	// enabled with no key anywhere: runtime would 401 every voice note
+	_, warnings := Validate(base(&TranscribeConfig{Enabled: true, APIKey: "k"}))
+	if len(warnings) != 0 {
+		t.Fatalf("transcribe with own key should be silent, got %v", warnings)
+	}
+	_, warnings = Validate(base(&TranscribeConfig{Enabled: true}))
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "OPENAI_API_KEY not set") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("transcribe without key should warn, got %v", warnings)
+	}
+	// disabled transcribe says nothing at all
+	problems, warnings = Validate(base(&TranscribeConfig{BaseURL: "http://[::1]:namedport"}))
+	if len(problems) != 0 || len(warnings) != 0 {
+		t.Fatalf("disabled transcribe should be silent, got %v / %v", problems, warnings)
 	}
 }
 

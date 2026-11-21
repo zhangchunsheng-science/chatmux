@@ -249,6 +249,91 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		}
 	}
 
+	// meeting: an unknown channel or half-set target makes the VC
+	// notifier silently dead (handleMeetingEvent drops the announce on
+	// sender lookup failure).
+	if cfg.Meeting != nil {
+		if cfg.Meeting.Channel != "" && !channels[cfg.Meeting.Channel] {
+			add("meeting: unknown channel %q", cfg.Meeting.Channel)
+		}
+		if cfg.Meeting.Channel != "" && cfg.Meeting.ChatID == "" {
+			add("meeting: chatId is required when channel is set")
+		}
+		if cfg.Meeting.Channel == "" && cfg.Meeting.ChatID != "" {
+			add("meeting: channel is required when chatId is set")
+		}
+	}
+	// oncall: members/anchor/rotation problems make Parse fail — main
+	// then skips the whole notice scheduler and /oncall replies with
+	// the raw error; a rotation typo silently degrades to daily.
+	// (Checks mirror oncall.Parse inline: importing it here would be a
+	// cycle — oncall depends on config.)
+	if cfg.Oncall != nil {
+		if len(cfg.Oncall.Members) == 0 {
+			add("oncall: members is empty")
+		}
+		if cfg.Oncall.Anchor != "" {
+			if _, err := time.ParseInLocation("2006-01-02", cfg.Oncall.Anchor, time.Now().Location()); err != nil {
+				add("oncall: bad anchor %q (want YYYY-MM-DD)", cfg.Oncall.Anchor)
+			}
+		}
+		if r := cfg.Oncall.Rotation; r != "" && r != "daily" && r != "weekly" {
+			add("oncall: unknown rotation %q (daily|weekly)", r)
+		}
+		if cfg.Oncall.Channel != "" {
+			if !channels[cfg.Oncall.Channel] {
+				add("oncall: unknown channel %q", cfg.Oncall.Channel)
+			}
+			if cfg.Oncall.ChatID == "" {
+				add("oncall: chatId is required when channel is set")
+			}
+		}
+	}
+	// forms: duplicate names shadow (first match wins at /form and at
+	// submission); a form without fields posts an empty card.
+	formNames := map[string]bool{}
+	for i, f := range cfg.Forms {
+		if f.Name == "" {
+			add("forms[%d]: name is required", i)
+			continue
+		}
+		if formNames[f.Name] {
+			add("forms[%d] %q: duplicate name", i, f.Name)
+		}
+		formNames[f.Name] = true
+		if len(f.Fields) == 0 {
+			add("forms[%d] %q: no fields — /form would post an empty card", i, f.Name)
+		}
+	}
+	// transcribe: the baseUrl family again (agents had it, voice notes
+	// didn't) — a typo sends every voice note to the wrong endpoint;
+	// no key anywhere means 401 per note.
+	if tc := cfg.Transcribe; tc != nil && tc.Enabled {
+		if tc.BaseURL != "" && !probedBaseURLs[tc.BaseURL] {
+			probedBaseURLs[tc.BaseURL] = true
+			if u, err := url.Parse(tc.BaseURL); err != nil || u.Host == "" {
+				add("transcribe: baseUrl %q does not parse as a URL", tc.BaseURL)
+			} else {
+				port := u.Port()
+				if port == "" {
+					if u.Scheme == "https" {
+						port = "443"
+					} else {
+						port = "80"
+					}
+				}
+				if c, err := net.DialTimeout("tcp", net.JoinHostPort(u.Hostname(), port), 2*time.Second); err != nil {
+					warn("transcribe: baseUrl %s unreachable (%v) — voice notes would fail if this persists", u.Host, err)
+				} else {
+					c.Close()
+				}
+			}
+		}
+		if tc.APIKey == "" && os.Getenv("OPENAI_API_KEY") == "" {
+			warn("transcribe: no apiKey and OPENAI_API_KEY not set — voice notes would fail auth at runtime")
+		}
+	}
+
 	if cfg.I18n != nil && cfg.I18n.Locale != "" && cfg.I18n.Locale != "zh" && cfg.I18n.Locale != "en" {
 		add("i18n: unsupported locale %q (zh|en)", cfg.I18n.Locale)
 	}
