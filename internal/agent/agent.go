@@ -50,10 +50,11 @@ type Runtime struct {
 	schedCtx   context.Context
 	userScheds []userSchedule // /schedule-managed, persisted
 
-	mu     sync.Mutex
-	turns  map[session.Key]*turn // in-flight turn per chat
-	jobs   map[string]*bgJob     // background jobs by id (bg-N)
-	jobSeq int
+	mu      sync.Mutex
+	turns   map[session.Key]*turn   // in-flight turn per chat
+	jobs    map[string]*bgJob       // background jobs by id (bg-N)
+	jobSeq  int                     // bg job id sequence
+	rateWin map[session.Key][]int64 // per-chat turn starts (unix ns) in the last 60s
 }
 
 // turn is one in-flight model call for a chat.
@@ -88,7 +89,49 @@ func NewRuntime(cfg *config.Config, registry *provider.Registry, chans map[strin
 		dataDir:  cfg.DataDir,
 		turns:    map[session.Key]*turn{},
 		jobs:     map[string]*bgJob{},
+		rateWin:  map[session.Key][]int64{},
 	}
+}
+
+// allowTurn applies the per-chat flood window (cfg.TurnRatePerMinute).
+// It is the single choke point for model turns — direct messages,
+// queue-drain follow-ups, retries and enrichment re-entries all pass
+// through launchTurn. Pure logic lives in slideTurnWindow so the
+// window math is testable without a clock.
+func (r *Runtime) allowTurn(key session.Key) bool {
+	limit := r.cfg.TurnRatePerMinute
+	if limit <= 0 {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now().UnixNano()
+	win, ok := slideTurnWindow(r.rateWin[key], now, limit)
+	if !ok {
+		r.rateWin[key] = win
+		return false
+	}
+	r.rateWin[key] = win
+	return true
+}
+
+// slideTurnWindow drops entries older than 60s from ts (unix-ns
+// timestamps) and reports whether one more turn fits under limit.
+// Returns the pruned window either way — a refused turn doesn't
+// consume a slot, but pruning still compacts the slice.
+func slideTurnWindow(ts []int64, nowNs int64, limit int) ([]int64, bool) {
+	const window = int64(60 * time.Second)
+	cut := nowNs - window
+	keep := ts[:0]
+	for _, t := range ts {
+		if t > cut {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) >= limit {
+		return keep, false
+	}
+	return append(keep, nowNs), true
 }
 
 // persistSessions snapshots conversations to disk (async, best effort).
@@ -241,6 +284,18 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 
 // launchTurn starts a foreground (chat-serializing) turn.
 func (r *Runtime) launchTurn(key session.Key, msg channel.Message, agentCfg *config.AgentConfig, sender channel.Sender) {
+	// flood window: every model turn funnels through here, so this
+	// covers direct messages, queue-drain batches, retries and
+	// enrichment re-entries alike. Commands never reach this point.
+	if !r.allowTurn(key) {
+		metrics.TurnRateLimited()
+		log.Printf("turn rate-limited: %s/%s agent=%s — over %d/min, message dropped",
+			key.Channel, key.ChatID, agentCfg.Name, r.cfg.TurnRatePerMinute)
+		go func() {
+			_, _ = sender.Send(context.Background(), r.say("ratelimited"), channel.SendOptions{})
+		}()
+		return
+	}
 	r.mu.Lock()
 	if _, busy := r.turns[key]; busy { // raced with another dispatcher
 		r.mu.Unlock()

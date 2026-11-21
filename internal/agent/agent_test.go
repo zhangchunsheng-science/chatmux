@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1309,5 +1310,84 @@ func TestBgJobPanicCleansUp(t *testing.T) {
 	rt.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("panicked bg job still registered (%d), /jobs would show a zombie", n)
+	}
+}
+
+func TestSlideTurnWindow(t *testing.T) {
+	base := int64(100 * time.Second)
+	// limit 2: two fresh starts fit, the third is refused and does not
+	// consume a slot (the window is unchanged by a refusal)
+	w, ok := slideTurnWindow(nil, base, 2)
+	if !ok || len(w) != 1 {
+		t.Fatalf("first turn: ok=%v win=%v", ok, w)
+	}
+	w, ok = slideTurnWindow(w, base+int64(time.Second), 2)
+	if !ok || len(w) != 2 {
+		t.Fatalf("second turn: ok=%v win=%v", ok, w)
+	}
+	w, ok = slideTurnWindow(w, base+2*int64(time.Second), 2)
+	if ok || len(w) != 2 {
+		t.Fatalf("third turn must be refused without consuming a slot: ok=%v win=%v", ok, w)
+	}
+	// entries older than 60s drop out: both starts 61s ago → room again
+	old := []int64{base - 61*int64(time.Second), base - 62*int64(time.Second)}
+	w, ok = slideTurnWindow(old, base, 2)
+	if !ok || len(w) != 1 {
+		t.Fatalf("expired entries must be pruned: ok=%v win=%v", ok, w)
+	}
+}
+
+// countingProvider counts Stream calls and echoes the last user text.
+type countingProvider struct{ calls atomic.Int32 }
+
+func (c *countingProvider) Name() string { return "openai" }
+func (c *countingProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Delta, error) {
+	c.calls.Add(1)
+	ch := make(chan provider.Delta, 2)
+	last := ""
+	for _, m := range req.Messages {
+		if m.Role == provider.User {
+			last = m.Content
+		}
+	}
+	go func() {
+		ch <- provider.Delta{Text: last}
+		close(ch)
+	}()
+	return ch, nil
+}
+
+func TestTurnRateLimit(t *testing.T) {
+	cfg := &config.Config{
+		DataDir:           t.TempDir(),
+		TurnRatePerMinute: 2,
+		Agents:            []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent:      "default",
+	}
+	reg := provider.NewRegistry()
+	cp := &countingProvider{}
+	reg.Register(cp)
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	s := &fakeSender{}
+	rt.chans["feishu"] = &stubChannel{sender: s}
+
+	for _, txt := range []string{"第一条", "第二条"} {
+		rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: txt})
+		waitContains(t, s, txt) // echo reply: the turn ran
+	}
+	// third within the window: refused with a notice, model never called
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "第三条"})
+	waitContains(t, s, "消息太密集")
+	if got := cp.calls.Load(); got != 2 {
+		t.Fatalf("provider calls = %d, want 2 (third turn must never reach the model)", got)
+	}
+	if n := metrics.RateLimitedTurns(); n < 1 {
+		t.Fatalf("chatmux_turns_rate_limited_total counter = %d, want >= 1", n)
+	}
+	// commands are never rate-limited: /help must answer after the refusal
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", UserID: "u1", Text: "/help"})
+	waitContains(t, s, "/stop")
+	if got := cp.calls.Load(); got != 2 {
+		t.Fatalf("provider calls = %d after /help, still want 2", got)
 	}
 }

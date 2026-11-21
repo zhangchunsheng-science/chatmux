@@ -10,9 +10,10 @@ package metrics
 import "sync/atomic"
 
 var (
-	watchdogFires   atomic.Int64
-	streamRetries   atomic.Int64
-	channelRestarts atomic.Int64
+	watchdogFires    atomic.Int64
+	streamRetries    atomic.Int64
+	channelRestarts  atomic.Int64
+	turnsRateLimited atomic.Int64
 )
 
 // WatchdogFire records one turn cancelled by the turn-budget watchdog.
@@ -26,6 +27,14 @@ func StreamRetry() { streamRetries.Add(1) }
 // heading into backoff — a climbing rate is credential rot or a flappy
 // upstream, not load.
 func ChannelRestart() { channelRestarts.Add(1) }
+
+// TurnRateLimited records one model turn refused by the per-chat
+// turn-rate window (flood control). Climbing = a chat is hammering
+// the bot — check who before the API-key bill does.
+func TurnRateLimited() { turnsRateLimited.Add(1) }
+
+// RateLimitedTurns returns turns refused by the rate window so far.
+func RateLimitedTurns() int64 { return turnsRateLimited.Load() }
 
 // Snapshot returns (watchdog fires, stream retries, channel restarts)
 // since process start.

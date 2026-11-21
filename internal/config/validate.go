@@ -80,6 +80,10 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		}
 	}
 
+	if cfg.TurnRatePerMinute < 0 {
+		add("turnRatePerMinute: %d is negative (0 disables the per-chat flood limit)", cfg.TurnRatePerMinute)
+	}
+
 	// admin-token probe: with an empty adminToken the guard on every
 	// /admin/* route passes everyone through — /admin/chat drives the
 	// agents (spending their API keys), /admin/stop kills the process,

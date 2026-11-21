@@ -994,6 +994,8 @@ func mountAdmin(mux *http.ServeMux, cfg *config.Config, rt *agent.Runtime, chans
 			fmt.Sprintf("chatmux_stream_retries_total %d\n", sRetries))
 		b.WriteString("# HELP chatmux_channel_reconnects_total Channel adapter exits followed by a backoff reconnect.\n# TYPE chatmux_channel_reconnects_total counter\n" +
 			fmt.Sprintf("chatmux_channel_reconnects_total %d\n", cRestarts))
+		b.WriteString("# HELP chatmux_turns_rate_limited_total Model turns refused by the per-chat rate window.\n# TYPE chatmux_turns_rate_limited_total counter\n" +
+			fmt.Sprintf("chatmux_turns_rate_limited_total %d\n", metrics.RateLimitedTurns()))
 
 		aggs, err := usage.Summarize(cfg.DataDir)
 		if err == nil {

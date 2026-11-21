@@ -46,6 +46,10 @@ type Config struct {
 	Oncall *OncallConfig `json:"oncall,omitempty"`
 	// GroupWelcome overrides the bot_added greeting text (i18n default).
 	GroupWelcome string `json:"groupWelcome,omitempty"`
+	// TurnRatePerMinute caps model turns per chat in a sliding 60s
+	// window (0 = unlimited). Flood control: one looping user or a
+	// webhook storm otherwise burns the API key with nobody watching.
+	TurnRatePerMinute int `json:"turnRatePerMinute,omitempty"`
 	// Meeting routes VC meeting lifecycle announcements to a chat.
 	Meeting *MeetingConfig `json:"meeting,omitempty"`
 }

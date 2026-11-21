@@ -335,3 +335,21 @@ func TestValidateAttachmentRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTurnRatePerMinute(t *testing.T) {
+	base := func(n int) *Config {
+		return &Config{
+			TurnRatePerMinute: n,
+			Agents:            []AgentConfig{{Name: "a", Provider: "openai", APIKey: "k"}},
+			HTTP:              HTTPConfig{Listen: testListen(t)},
+		}
+	}
+	if p, _ := Validate(base(-1)); len(p) == 0 {
+		t.Error("negative turnRatePerMinute must be a problem")
+	}
+	for _, ok := range []int{0, 1, 60} {
+		if p, _ := Validate(base(ok)); len(p) != 0 {
+			t.Errorf("turnRatePerMinute %d flagged: %v", ok, p)
+		}
+	}
+}

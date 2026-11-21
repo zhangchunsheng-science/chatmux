@@ -388,8 +388,13 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 - 附件保留期：`attachmentRetention`（默认 `"72h"`，`"0"` 关闭）——启动即
   清扫 + 每小时一轮，`dataDir/attachments/` 按内容哈希存盘、按需重取，
   过期删除只花一次重新下载，不会弄坏进行中的会话
+- 刷屏保护：`turnRatePerMinute`（默认 `0` 不限）——每会话 60 秒滑动窗口
+  封顶模型 turn 数，超出回一句提示并丢弃（命令不受限）；触发计数上
+  `chatmux_turns_rate_limited_total` 指标，攀升说明有会话在刷 bot
 
 ## 状态
+
+v0.6.59（对齐循环第 79 轮）：刷屏保护——turnRatePerMinute 每会话 60 秒滑动窗口封顶模型 turn 数（0 不限），超出回提示并丢弃，命令不受限；钩子在 launchTurn 单一咽喉点，直发/排队合批/重试/富化全路径覆盖；触发计数上 chatmux_turns_rate_limited_total 指标（渲染守护自动纳管），check 对负值报 problem。守护测试三件：窗口数学纯函数（拒绝不占额度、过期自动滑出）、计数 provider 断言第三条永不达模型、命令在拒绝后仍可用。
 
 v0.6.58（对齐循环第 78 轮）：定位并修复数月来的 CI 偶发失败（v0.6.31/46/52/56/57 同一根因）——agent 测试经 internal/agent/data/sessions.json 在磁盘上共享会话状态（空 DataDir 默认落到真实 data/ 目录，被 .gitignore 掩盖）；用 GOMAXPROCS=2 + -shuffle + -count=3 在本地 10 种子复现 4 次，全部测试改用 t.TempDir() 隔离后 10/10 全绿。CI 注解同步升级为 awk 整块捕获（含多行断言输出），失败时能直接看到断言全文。
 

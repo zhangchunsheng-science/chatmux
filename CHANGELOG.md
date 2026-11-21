@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.59（对齐循环第 79 轮）
+
+- 刷屏保护（flood control）：`turnRatePerMinute`（默认 0 不限）给每个会话一个 60 秒滑动窗口，超出封顶的模型 turn 被拒绝——回一句「消息太密集了，歇一分钟再发」（i18n zh/en）并丢弃，一个循环脚本或 webhook 风暴不再能悄悄烧穿 API key。
+- 钩子放在 `launchTurn` 单一咽喉点：直发消息、排队合批排水、流重试、附件富化再入全路径统一覆盖；斜杠命令永不限流（/stop 等逃生口必须在）。
+- 窗口拒绝不占额度（拒一条不会让下一条更难过）、过期条目自动滑出；触发计数上 `chatmux_turns_rate_limited_total` 指标（渲染守护测试自动纳管），`chatmux check` 对负值报 problem。
+- 守护测试：`TestSlideTurnWindow`（纯函数窗口数学）、`TestTurnRateLimit`（计数 provider 断言第三条消息永不触达模型、拒绝后 /help 仍可用）。
+
 ## v0.6.58（对齐循环第 78 轮）
 
 - 修复数月 CI 偶发失败的根因：agent 测试通过 `internal/agent/data/sessions.json` 共享磁盘会话状态——`NewRuntime` 里空 `DataDir` 默认落真实 `data/` 目录（被 .gitignore 掩盖，git status 不可见）。GOMAXPROCS=2 + `-shuffle` + `-count=3` 本地 10 种子复现 4 次，日志显示 TestSessionCommands 读到污染历史（`· 某人: ping ↳ ping`）后超时。
