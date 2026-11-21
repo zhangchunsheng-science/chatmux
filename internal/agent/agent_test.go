@@ -372,6 +372,92 @@ func TestRemindCommand(t *testing.T) {
 	waitContains(t, s, "看不懂")
 }
 
+func TestAgentOverridePinsAgent(t *testing.T) {
+	rt, _ := testRuntime(t)
+	// Synthetic producers (docwatch "agent") pin an agent by name on
+	// the message itself.
+	msg := channel.Message{Channel: "feishu", ChatID: "c1", ChatType: "p2p", MentionedMe: true, Agent: "gated"}
+	if a := rt.agentFor(msg); a == nil || a.Name != "gated" {
+		t.Fatalf("msg.Agent pin should resolve to gated, got %+v", a)
+	}
+	// Unknown name falls back to normal routing (chatmux check reports
+	// the typo at config time).
+	msg.Agent = "ghost"
+	if a := rt.agentFor(msg); a == nil || a.Name != "default" {
+		t.Fatalf("unknown msg.Agent should fall back to default, got %+v", a)
+	}
+}
+
+// recordingProvider captures the model each stream was launched with,
+// so tests can tell which agent actually handled a turn.
+type recordingProvider struct {
+	mu     sync.Mutex
+	models []string
+}
+
+func (p *recordingProvider) Name() string { return "openai" }
+func (p *recordingProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Delta, error) {
+	p.mu.Lock()
+	p.models = append(p.models, req.Model)
+	p.mu.Unlock()
+	ch := make(chan provider.Delta)
+	close(ch)
+	return ch, nil
+}
+func (p *recordingProvider) recorded() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.models...)
+}
+
+func TestAgentPinBeatsSessionSwitch(t *testing.T) {
+	// docwatch "agent" is config-authored routing; the chat's /agent
+	// switch is interactive. End to end through Handle, the pin wins.
+	cfg := &config.Config{
+		DataDir: t.TempDir(),
+		Agents: []config.AgentConfig{
+			{Name: "default", Provider: "openai", Model: "m-default"},
+			{Name: "open", Provider: "openai", Model: "m-open"},
+			{Name: "gated", Provider: "openai", Model: "m-gated"},
+		},
+		DefaultAgent: "default",
+	}
+	rec := &recordingProvider{}
+	reg := provider.NewRegistry()
+	reg.Register(rec)
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	rt.chans["feishu"] = &stubChannel{sender: &fakeSender{}}
+	key := session.Key{Channel: "feishu", ChatID: "c1"}
+
+	// interactive switch to "open" …
+	rt.sessions.Set(key, func(x *session.Session) { x.Agent = "open" })
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", ChatType: "p2p",
+		MentionedMe: true, Text: "hi"})
+	waitFor := func(n int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if len(rec.recorded()) >= n {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("only %d turns recorded, want %d: %v", len(rec.recorded()), n, rec.recorded())
+	}
+	waitFor(1)
+	// … a pinned docwatch message still lands on "gated"
+	rt.Handle(context.Background(), channel.Message{Channel: "feishu", ChatID: "c1", ChatType: "p2p",
+		MentionedMe: true, Agent: "gated", Text: "doc changed"})
+	waitFor(2)
+	got := rec.recorded()
+	if got[0] != "m-open" {
+		t.Fatalf("first turn should use session-switched open, got %v", got)
+	}
+	if got[1] != "m-gated" {
+		t.Fatalf("pinned turn should use gated despite session switch, got %v", got)
+	}
+}
+
 func TestAgentSwitch(t *testing.T) {
 	rt, key := testRuntime(t)
 	a := &rt.cfg.Agents[0]

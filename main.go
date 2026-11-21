@@ -694,7 +694,7 @@ func runServer(cfgPath string) int {
 			e := byName[name]
 			rt.Handle(context.Background(), channel.Message{
 				Channel: e.Channel, ChatID: e.ChatID, ThreadID: e.ThreadID,
-				ChatType: "p2p", MentionedMe: true,
+				ChatType: "p2p", MentionedMe: true, Agent: e.Agent,
 				UserName: "docwatch:" + name, Text: prompt,
 			})
 		}).Start(ctx)

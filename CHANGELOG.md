@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.75（对齐循环第 95 轮）
+
+- 死引用收尾——盘点 config 全部 Agent 交叉引用：defaultAgent / workflows.agent / steps[].agent / fallbackAgent 均有校验，唯独 docwatch 的 `"agent"`（config 里注明 "route override"）是彻底死字段：docwatch 不读它、main 装配不传它、channel.Message 没有承载它的位——用户配了就静默无视（baseUrl bug 的同款漂移，恰好漏在 consumed 守护的 `\bAgent\b` 太泛匹配之外）。
+- 修法是兑现承诺而不是删字段：Message 增加 `Agent` 钉住位；agentFor 先按名解析（未知/禁用名回落正常路由）；main 的 docwatch 装配传入 e.Agent；Handle 里钉住的 agent 赢过聊天里的 /agent 切换（配置作者的路由选择优先于交互切换）。
+- 校验补位：chatmux check 对 docwatch[].agent 报 `unknown agent`（与 workflows 同款）。
+- 守护：TestAgentOverridePinsAgent（钉住解析 + 未知名回落）、TestAgentPinBeatsSessionSwitch（recordingProvider 端到端验证钉住赢过会话切换）、TestValidateDocwatchAgent（typo 必报、正确名不报）。
+
 ## v0.6.74（对齐循环第 94 轮）
 
 - 修 v0.6.73 CI 暴露的真竞态（92 轮 -race + 85 轮注解优先的回报）：TestBusyAndShutdownDrain 两连挂，真实断言是 TempDir RemoveAll "directory not empty"——persistSessions 的 fire-and-forget Save goroutine 可活过 close(t.done)、活过 Shutdown 的同步 Save，在测试收尾清理目录后才落地。这也正是 57/64/66 轮三次同名"flake"的真面目（当时注解坏，只见 0.00s 失败被当 runner 抖动放掉）。

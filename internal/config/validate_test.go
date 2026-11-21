@@ -75,6 +75,22 @@ func TestValidateDocwatchPathIsWarning(t *testing.T) {
 	}
 }
 
+func TestValidateDocwatchAgent(t *testing.T) {
+	cfg := &Config{
+		Channels: []ChannelConfig{{Type: "feishu", Name: "fs", Options: []byte(`{}`)}},
+		Agents:   []AgentConfig{{Name: "a", APIKey: "k"}},
+		HTTP:     HTTPConfig{Listen: testListen(t)},
+		DocWatch: []DocWatchConfig{
+			{Name: "typo", Path: ".", Channel: "fs", ChatID: "c1", Prompt: "p", Agent: "ghost"},
+			{Name: "ok", Path: ".", Channel: "fs", ChatID: "c1", Prompt: "p", Agent: "a"},
+		},
+	}
+	problems, _ := Validate(cfg)
+	if len(problems) != 1 || !strings.Contains(problems[0], `unknown agent "ghost"`) {
+		t.Fatalf("problems = %v, want one unknown-agent finding for docwatch[0]", problems)
+	}
+}
+
 func TestValidateNoChannelsIsWarning(t *testing.T) {
 	// The web console channel is always attached at boot, so a config
 	// with zero IM channels is a valid gateway-only setup: warning, not

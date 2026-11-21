@@ -38,6 +38,7 @@ type Quoted struct {
 type Message struct {
 	ID            string   // platform message id (for reply/quote/react)
 	Channel       string   // channel name, e.g. "feishu"
+	Agent         string   // synthetic-producer pin: resolve to this agent by name ("" = normal routing)
 	ChatID        string   // conversation id, stable per chat/group
 	ChatType      string   // "p2p" | "group"
 	ThreadID      string   // thread/topic root id, "" for flat chats

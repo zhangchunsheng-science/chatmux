@@ -241,6 +241,9 @@ func Validate(cfg *Config) (problems, warnings []string) {
 		if !channels[d.Channel] {
 			add("docwatch[%d] %q: unknown channel %q", i, d.Name, d.Channel)
 		}
+		if d.Agent != "" && !agents[d.Agent] {
+			add("docwatch[%d] %q: unknown agent %q", i, d.Name, d.Agent)
+		}
 		if d.ChatID == "" {
 			add("docwatch[%d] %q: chatId is required", i, d.Name)
 		}

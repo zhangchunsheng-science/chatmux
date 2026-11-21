@@ -287,10 +287,16 @@ func (r *Runtime) Handle(ctx context.Context, msg channel.Message) {
 		return
 	}
 	agentCfg := r.agentFor(msg)
-	// per-session agent override (/agent) beats route-based selection
-	if name := r.sessions.Get(key).Agent; name != "" {
-		if a := r.agentByName(name); a != nil {
-			agentCfg = a
+	// per-session agent override (/agent) beats route-based selection,
+	// except when the message pins an agent by name (docwatch "agent"):
+	// the config author's routing choice wins over the chat's
+	// interactive switch.
+	pinned := msg.Agent != "" && agentCfg != nil && agentCfg.Name == msg.Agent
+	if !pinned {
+		if name := r.sessions.Get(key).Agent; name != "" {
+			if a := r.agentByName(name); a != nil {
+				agentCfg = a
+			}
 		}
 	}
 	if agentCfg == nil {
@@ -1334,6 +1340,20 @@ func (r *Runtime) senderFor(msg channel.Message) (channel.Sender, error) {
 }
 
 func (r *Runtime) agentFor(msg channel.Message) *config.AgentConfig {
+	// Synthetic producers (docwatch "agent" override) may pin a
+	// specific agent by name; unknown or disabled names fall through
+	// to normal route resolution (chatmux check catches the typos).
+	if msg.Agent != "" {
+		for i := range r.cfg.Agents {
+			a := &r.cfg.Agents[i]
+			if a.Name == msg.Agent {
+				if a.Enabled == nil || *a.Enabled {
+					return a
+				}
+				break
+			}
+		}
+	}
 	for i := range r.cfg.Agents {
 		a := &r.cfg.Agents[i]
 		if a.Enabled != nil && !*a.Enabled {

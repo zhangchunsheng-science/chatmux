@@ -242,9 +242,12 @@ Telegram 音频文件均支持。
 
 ```json
 "docwatch": [{ "name": "plan", "path": "docs/plan.md", "intervalSec": 60,
-  "channel": "feishu", "chatId": "oc_xxxx",
+  "channel": "feishu", "chatId": "oc_xxxx", "agent": "writer",
   "prompt": "计划文档有更新，请总结变更：\n{{diff}}" }]
 ```
+
+可选 `"agent"` 把该监视固定交给指定 agent（不走路由，也不受聊天里
+`/agent` 切换影响）；名字写错 `chatmux check` 会报 `unknown agent`。
 
 首次只记基线不触发；之后每次变更产出 +/- 行级差异摘录（上限可配长度，
 LCS 行 diff）注入 `{{diff}}`，其余占位符 `{{name}}` `{{path}}`。
@@ -406,6 +409,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.75（对齐循环第 95 轮）：死引用收尾——docwatch 的 `"agent"`（"route override"）原是彻底死字段：装配不读不传，配了静默无视。现兑现承诺：Message 加 Agent 钉住位，agentFor 按名解析（未知/禁用回落正常路由），钉住的 agent 赢过聊天内 /agent 切换；chatmux check 补 `unknown agent` 校验；端到端守护测试锁 precedence。
+
 v0.6.74（对齐循环第 94 轮）：修真竞态——persistSessions 的游离 Save goroutine 可活过 Shutdown 同步快照，在测试 TempDir 清理后才落地（directory not empty）；正是 57/64/66 轮三次同名 flake 的真面目，被 92 轮 -race+85 轮注解优先组合翻出。修法：persistWG 等齐异步快照再落权威版，退出路径同受益。
 
 v0.6.73（对齐循环第 93 轮）：排队上限——turn 期间跟进消息的队列原来无上限（限流只拦 turn 启动，排队直通），cron 高频或坏客户端可把队列灌到 RAM 无界，排干 mega-batch 又撑满回放预算让 turn 更慢（死亡螺旋）；现 maxQueuedFollowups=50 封顶，溢出丢弃+每 turn 一次提示（i18n）；守护：60 条灌入恰好 50 入队+提示 1 次。
@@ -415,7 +420,3 @@ v0.6.72（对齐循环第 92 轮）：-race 常态化进 CI 的 agent stress 步
 v0.6.71（对齐循环第 91 轮）：CLI 子进程按进程组杀——CommandContext 默认只杀直接子进程，claude/gemini 等会再 spawn 孙进程：/stop 或看门狗后孙进程泄漏且占住 stdout 管道；unix 上 Setpgid+kill(-pid) 整组杀、WaitDelay 30s 兜底 setsid 逃逸者，windows 保持默认（build tag 分文件）。守护：marker 孙进程 cancel 后全灭断言，阴性验证禁用组杀即红。
 
 v0.6.70（对齐循环第 90 轮）：附件下载每取有界——图像路径原来裸用 turn ctx（上界仅 turnTimeout 30m），卡死媒体主机可把整个 turn 和会话占满半小时，而语音路径早有 5 分钟兜底（不对称）；现收敛 attachmentDownloadTimeout 统一覆盖图像/音频×2/转写四个点，超时后图像回退公开 URL 给视觉模型。守护：wedgeDLChannel 卡死桩（无字节直到 deadline）限时返回 + URL 回退断言。
-
-v0.6.69（对齐循环第 89 轮）：服务端慢客户端收口——网关 http.Server 原来零超时（Gosec G114），不完成请求的开放连接可永久占 fd（slowloris）；现 ReadHeaderTimeout 10s/ReadTimeout 60s/IdleTimeout 120s。WriteTimeout 刻意不设：/admin/ask 按调用方 timeoutSec 合法长阻塞，固定写超时会切断正当慢问（handler 各自有界）；守护测试钉住三值 + WriteTimeout 必须为 0。
-
-MIT
