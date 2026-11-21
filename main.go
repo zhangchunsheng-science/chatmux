@@ -121,7 +121,10 @@ func runClient(args []string, cfgPath string) int {
 	case "update":
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		res, err := update.Apply(ctx)
+		// 兜底 deadline：GitHub 拉不动时 5 分钟放弃，而不是挂到 Ctrl-C
+		uctx, ucancel := context.WithTimeout(ctx, updateTimeout)
+		defer ucancel()
+		res, err := update.Apply(uctx)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "更新失败:", err)
 			return 1
@@ -160,10 +163,15 @@ func runClient(args []string, cfgPath string) int {
 	}
 	base := "http://" + cfg.HTTP.Listen
 	token := cfg.HTTP.AdminToken
+	// 客户端统一信号 ctx：每个请求再各自叠加 deadline，卡死网关挂不住 CLI
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	switch cmd {
 	case "status":
-		body, code, err := adminReq(http.MethodGet, base+"/admin/status", token, nil)
+		cctx, cancel := context.WithTimeout(ctx, clientQuickTimeout)
+		defer cancel()
+		body, code, err := adminReq(cctx, http.MethodGet, base+"/admin/status", token, nil)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -176,7 +184,9 @@ func runClient(args []string, cfgPath string) int {
 		_ = json.Indent(&pretty, body, "", "  ")
 		fmt.Println(pretty.String())
 	case "stop":
-		_, code, err := adminReq(http.MethodPost, base+"/admin/stop", token, nil)
+		cctx, cancel := context.WithTimeout(ctx, clientQuickTimeout)
+		defer cancel()
+		_, code, err := adminReq(cctx, http.MethodPost, base+"/admin/stop", token, nil)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -205,7 +215,9 @@ func runClient(args []string, cfgPath string) int {
 			payload["threadId"] = parts[2]
 		}
 		b, _ := json.Marshal(payload)
-		body, code, err := adminReq(http.MethodPost, base+"/admin/send", token, b)
+		cctx, cancel := context.WithTimeout(ctx, clientQuickTimeout)
+		defer cancel()
+		body, code, err := adminReq(cctx, http.MethodPost, base+"/admin/send", token, b)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -218,17 +230,10 @@ func runClient(args []string, cfgPath string) int {
 	case "ask":
 		fs := flag.NewFlagSet("ask", flag.ExitOnError)
 		to := fs.String("to", "", "channel:chatId[:threadId]")
-		_ = fs.String("opt", "", "fixed option (repeatable)")
 		timeout := fs.Int("timeout", 600, "timeout seconds")
-		fs.Parse(rest)
-		// collect repeated -opt flags in original order
 		var opts []string
-		raw := rest
-		for i := 0; i < len(raw); i++ {
-			if raw[i] == "-opt" && i+1 < len(raw) {
-				opts = append(opts, raw[i+1])
-			}
-		}
+		fs.Func("opt", "fixed option (repeatable)", func(v string) error { opts = append(opts, v); return nil })
+		fs.Parse(rest)
 		question := strings.Join(fs.Args(), " ")
 		if *to == "" || question == "" {
 			fmt.Fprintln(os.Stderr, `usage: chatmux ask -to channel:chatId [-opt A -opt B] [-timeout 600] 问题`)
@@ -243,8 +248,12 @@ func runClient(args []string, cfgPath string) int {
 			payload["threadId"] = parts[2]
 		}
 		b, _ := json.Marshal(payload)
-		fmt.Println("已向聊天提问，等待回答…（Ctrl-C 放弃）")
-		body, code, err := adminReq(http.MethodPost, base+"/admin/ask", token, b)
+		// 客户端兜底：网关最多等到 timeoutSec 才回答，再加缓冲
+		deadline := time.Duration(*timeout)*time.Second + clientAskGrace
+		cctx, ccancel := context.WithTimeout(ctx, deadline)
+		defer ccancel()
+		fmt.Println("已向聊天提问，等待回答…")
+		body, code, err := adminReq(cctx, http.MethodPost, base+"/admin/ask", token, b)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -272,12 +281,14 @@ func runClient(args []string, cfgPath string) int {
 	return 0
 }
 
-// fleet 客户端兜底超时（list 本来就是 5s/实例）：status/send 是管理面
-// 快操作，30s 足够；ask 网关最多等到 -timeout 秒才回答，再加缓冲。
-// 没有它们，一个卡死的网关能把 CLI 挂到 Ctrl-C 为止。测试里可调小。
+// CLI 客户端兜底超时（fleet 与单实例客户端共用；fleet list 本就是
+// 5s/实例）：status/send 是管理面快操作，30s 足够；ask 网关最多等到
+// -timeout 秒才回答，再加缓冲。没有它们，一个卡死的网关能把 CLI 挂到
+// Ctrl-C 为止。测试里可调小。
 var (
-	fleetQuickTimeout = 30 * time.Second
-	fleetAskGrace     = 30 * time.Second
+	clientQuickTimeout = 30 * time.Second
+	clientAskGrace     = 30 * time.Second
+	updateTimeout      = 5 * time.Minute
 )
 
 // runFleet: chatmux fleet list|status <名>|send <名> -to ch:chat 文本|ask <名> -to ch:chat 问题
@@ -332,7 +343,7 @@ func runFleet(args []string) int {
 			fmt.Fprintln(os.Stderr, "usage: chatmux fleet status <实例>")
 			return 2
 		}
-		cctx, cancel := context.WithTimeout(ctx, fleetQuickTimeout)
+		cctx, cancel := context.WithTimeout(ctx, clientQuickTimeout)
 		defer cancel()
 		body, code, err := fc.Call(cctx, rest[0], http.MethodGet, "/admin/status", nil)
 		if err != nil || code != 200 {
@@ -378,9 +389,9 @@ func runFleet(args []string) int {
 		}
 		// 客户端兜底超时：send 投递即返走快超时；ask 给网关留满
 		// -timeout 的回答时间再加缓冲，两头都不会永远挂着。
-		deadline := fleetQuickTimeout
+		deadline := clientQuickTimeout
 		if sub == "ask" {
-			deadline = time.Duration(*timeout)*time.Second + fleetAskGrace
+			deadline = time.Duration(*timeout)*time.Second + clientAskGrace
 		}
 		cctx, cancel := context.WithTimeout(ctx, deadline)
 		defer cancel()
@@ -409,12 +420,12 @@ func runFleet(args []string) int {
 	}
 }
 
-func adminReq(method, url, token string, body []byte) ([]byte, int, error) {
+func adminReq(ctx context.Context, method, url, token string, body []byte) ([]byte, int, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, url, rd)
+	req, err := http.NewRequestWithContext(ctx, method, url, rd)
 	if err != nil {
 		return nil, 0, err
 	}

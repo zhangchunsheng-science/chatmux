@@ -12,11 +12,17 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/zhangchunsheng-science/chatmux/internal/version"
 )
 
 const protocolVersion = "2024-11-05"
+
+// mcpAskGrace pads the chatmux_ask client deadline past the gateway's
+// timeoutSec so a slow-but-working answer is never cut off. Var so tests
+// can shrink it.
+var mcpAskGrace = 30 * time.Second
 
 // Server answers MCP requests by proxying a chatmux admin endpoint.
 type Server struct {
@@ -228,7 +234,12 @@ func (s *Server) callTool(ctx context.Context, name string, args json.RawMessage
 		if n, ok := a["timeoutSec"].(float64); ok && n > 0 {
 			payload["timeoutSec"] = int(n)
 		}
-		body, code, err := s.req(ctx, http.MethodPost, "/admin/ask", payload)
+		// client-side bound: the gateway may wait out the full timeoutSec
+		// before answering; add grace and never hang the MCP host's call
+		ts, _ := payload["timeoutSec"].(int)
+		actx, acancel := context.WithTimeout(ctx, time.Duration(ts)*time.Second+mcpAskGrace)
+		defer acancel()
+		body, code, err := s.req(actx, http.MethodPost, "/admin/ask", payload)
 		if err != nil {
 			return "提问失败: " + err.Error(), true
 		}

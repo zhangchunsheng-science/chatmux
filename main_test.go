@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -442,9 +443,9 @@ func TestRunFleetTimeoutsGuardHangs(t *testing.T) {
 	}
 	t.Setenv("CHATMUX_FLEET", fleetPath)
 
-	oldQuick, oldGrace := fleetQuickTimeout, fleetAskGrace
-	fleetQuickTimeout, fleetAskGrace = 150*time.Millisecond, 150*time.Millisecond
-	defer func() { fleetQuickTimeout, fleetAskGrace = oldQuick, oldGrace }()
+	oldQuick, oldGrace := clientQuickTimeout, clientAskGrace
+	clientQuickTimeout, clientAskGrace = 150*time.Millisecond, 150*time.Millisecond
+	defer func() { clientQuickTimeout, clientAskGrace = oldQuick, oldGrace }()
 
 	done := make(chan int, 2)
 	start := time.Now()
@@ -491,6 +492,82 @@ func TestRunFleetAskOptForms(t *testing.T) {
 
 	if code := runFleet([]string{"ask", "ok", "-to", "web:c1", "-opt=A", "-opt", "B", "选哪个"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || got[0] != "A" || got[1] != "B" {
+		t.Fatalf("options = %v, want [A B]", got)
+	}
+}
+
+// TestAdminReqHonorsContextDeadline pins the direct client's ctx plumbing:
+// a wedged gateway must surface a ctx error fast, not hang the CLI.
+func TestAdminReqHonorsContextDeadline(t *testing.T) {
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	defer hang.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, _, err := adminReq(ctx, http.MethodGet, hang.URL+"/admin/status", "t", nil); err == nil {
+		t.Fatal("wedged gateway should error")
+	} else if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("adminReq took %s; deadline not honored", elapsed)
+	}
+}
+
+// TestRunClientAskHangsAndOptForms exercises the real ask client: a wedged
+// gateway fails within the (shrunken) deadline instead of hanging, and both
+// -opt spellings reach the gateway as options.
+func TestRunClientAskHangsAndOptForms(t *testing.T) {
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	defer hang.Close()
+	hangHost := strings.TrimPrefix(hang.URL, "http://")
+
+	var mu sync.Mutex
+	var got []string
+	rec := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Options []string `json:"options"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		got = req.Options
+		mu.Unlock()
+		w.Write([]byte(`{"answer":"ok"}`))
+	}))
+	defer rec.Close()
+	recHost := strings.TrimPrefix(rec.URL, "http://")
+
+	cfgFor := func(listen string) string {
+		p := filepath.Join(t.TempDir(), "cm.json")
+		cfg := `{"defaultAgent":"a","http":{"listen":"` + listen + `","adminToken":"t"},
+		  "agents":[{"name":"a","cli":{"type":"generic","bin":"/bin/echo"}}]}`
+		if err := os.WriteFile(p, []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	oldGrace := clientAskGrace
+	clientAskGrace = 150 * time.Millisecond
+	defer func() { clientAskGrace = oldGrace }()
+
+	// wedged gateway: -timeout 0 → deadline = 0 + grace
+	start := time.Now()
+	if code := runClient([]string{"ask", "-to", "web:c1", "-timeout", "0", "在吗"}, cfgFor(hangHost)); code != 1 {
+		t.Fatalf("wedged ask exit = %d, want 1", code)
+	}
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Fatalf("wedged ask took %s; client deadline not wired", elapsed)
+	}
+
+	// live gateway: both -opt spellings land as options
+	if code := runClient([]string{"ask", "-to", "web:c1", "-opt=A", "-opt", "B", "选哪个"}, cfgFor(recHost)); code != 0 {
+		t.Fatalf("live ask exit = %d, want 0", code)
 	}
 	mu.Lock()
 	defer mu.Unlock()

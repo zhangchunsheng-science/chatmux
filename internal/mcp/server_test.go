@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // serveQuestions spins a fake admin API and runs one Serve round.
@@ -139,5 +140,32 @@ func TestMethodNotFoundAndPing(t *testing.T) {
 	}
 	if !strings.Contains(out[2], "-32700") {
 		t.Fatalf("parse error: %s", out[2])
+	}
+}
+
+// TestAskWedgesFailFast pins the client-side bound on chatmux_ask: a wedged
+// gateway returns an error within timeoutSec+grace instead of hanging the
+// MCP host's tool call.
+func TestAskWedgesFailFast(t *testing.T) {
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}))
+	defer hang.Close()
+	old := mcpAskGrace
+	mcpAskGrace = 150 * time.Millisecond
+	defer func() { mcpAskGrace = old }()
+
+	srv := New(hang.URL, "t")
+	start := time.Now()
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"chatmux_ask","arguments":{"channel":"feishu","chatId":"oc_1","question":"在吗","timeoutSec":1}}}` + "\n")
+	var out strings.Builder
+	if err := srv.Serve(context.Background(), in, &out); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	if !strings.Contains(out.String(), "提问失败") {
+		t.Fatalf("wedged ask should error, got: %s", out.String())
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("wedged ask took %s; ask grace not wired", elapsed)
 	}
 }

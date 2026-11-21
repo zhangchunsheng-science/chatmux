@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.6.68（对齐循环第 88 轮）
+
+- CLI 出口全面有界（86 轮 fleet 修复的同族问题在主客户端身上）：`chatmux status/stop/send/ask` 的 adminReq 原来零 ctx 零 deadline（ask 的提示语甚至写着"Ctrl-C 放弃"——把挂死当功能）；现在 status/stop/send 30s 快超时、ask 在 -timeout 之上加 30s 缓冲，超时变量与 fleet 共用（fleetQuickTimeout→clientQuickTimeout 泛化改名）。
+- `chatmux update` 包 5 分钟兜底 deadline（GitHub 拉不动时放弃而非挂死）；MCP 的 chatmux_ask 工具同款客户端兜底（timeoutSec+30s，MCP 宿主的工具调用不再可被卡死网关拖住）。
+- 修 `chatmux ask -opt=A` 等号形式被静默丢弃（与 fleet 86 轮同款 bug，手写扫描只认相邻对）；换 flag.Func 后双形式等价可重复。
+- 守护：adminReq 的 ctx deadline 传导、runClient 级真实 ask 双场景（挂死网关限时失败 + -opt 双形式载荷断言，config fixture 需带 agents 否则 Load 拒绝——第一版挂死断言是假通过）、MCP ask 挂死限时失败。
+
 ## v0.6.67（对齐循环第 87 轮）
 
 - 回退跳上指标：fallbackAgent 是 v0.6.61 的 headline 特性，但触发后只有 daemon 日志一行——watchdog/流重试/限流/通道重连四族都上了指标，唯独它裸奔。现在 `chatmux_turn_fallbacks_total` 进 /metrics（渲染守护自动纳管），稳定攀升=主 agent 网关/key 挂了、bot 靠备胎在答，别处看不出任何异常。
