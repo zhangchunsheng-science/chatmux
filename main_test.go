@@ -575,3 +575,26 @@ func TestRunClientAskHangsAndOptForms(t *testing.T) {
 		t.Fatalf("options = %v, want [A B]", got)
 	}
 }
+
+// TestAdminServerTimeouts pins the gateway's slow-client bounds: with the
+// stdlib defaults (all zero) an open connection that never finishes its
+// request holds a fd forever (slowloris). WriteTimeout stays unset on
+// purpose — /admin/ask legitimately answers after the caller's timeoutSec.
+func TestAdminServerTimeouts(t *testing.T) {
+	s := newAdminServer(http.NotFoundHandler())
+	if s.ReadHeaderTimeout != 10*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %v, want 10s", s.ReadHeaderTimeout)
+	}
+	if s.ReadTimeout != 60*time.Second {
+		t.Fatalf("ReadTimeout = %v, want 60s", s.ReadTimeout)
+	}
+	if s.IdleTimeout != 120*time.Second {
+		t.Fatalf("IdleTimeout = %v, want 120s", s.IdleTimeout)
+	}
+	if s.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout = %v, want 0 (ask holds responses by design)", s.WriteTimeout)
+	}
+	if s.Handler == nil {
+		t.Fatal("handler must be wired")
+	}
+}

@@ -406,6 +406,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.69（对齐循环第 89 轮）：服务端慢客户端收口——网关 http.Server 原来零超时（Gosec G114），不完成请求的开放连接可永久占 fd（slowloris）；现 ReadHeaderTimeout 10s/ReadTimeout 60s/IdleTimeout 120s。WriteTimeout 刻意不设：/admin/ask 按调用方 timeoutSec 合法长阻塞，固定写超时会切断正当慢问（handler 各自有界）；守护测试钉住三值 + WriteTimeout 必须为 0。
+
 v0.6.68（对齐循环第 88 轮）：CLI 出口全面有界——86 轮给 fleet 补的超时在主客户端同样缺失：chatmux status/stop/send/ask 的 adminReq 原来零 deadline（ask 提示语写着 Ctrl-C 放弃，把挂死当功能），现 status/stop/send 30s、ask=-timeout+30s 缓冲（与 fleet 共用超时变量）；chatmux update 包 5 分钟兜底；MCP chatmux_ask 同款（timeoutSec+30s）。顺带修 ask -opt=A 等号形式被静默丢弃（flag.Func）。守护：adminReq/runClient/MCP 三层挂死限时失败 + -opt 双形式载荷。
 
 v0.6.67（对齐循环第 87 轮）：回退跳上指标——fallbackAgent（v0.6.61）触发后此前只有 daemon 日志一行，watchdog/流重试/限流/通道重连四族都有指标唯独它没有；chatmux_turn_fallbacks_total 进 /metrics（渲染守护自动纳管），攀升=主 agent 网关挂了、bot 靠备胎在答。守护：回退测试加指标增量断言 + 冒烟阶段 3 补计数断言。盘点引用上下文：Quoted 生产者 4/6 通道，钉钉 SDK 回调模型与企微回调 XML 均无引用字段（平台边界，README 已注记）。
@@ -415,7 +417,5 @@ v0.6.66（对齐循环第 86 轮）：fleet CLI 挂死免疫——status/send/as
 v0.6.65（对齐循环第 85 轮）：CI 注解按上限排优先级——GitHub 每步最多存 ~10 条注解，原管道先发断言块再发标识符，v0.6.64 的 stress 红被截断得只剩裸 exit 1（失败测试名全丢，白瞎一轮诊断）；现改为标识符先行（--- FAIL 测试名、FAIL 包名、panic、冒烟步骤），断言块填剩余槽位，截断也先保名字。合成日志 bash 干跑验证排序。
 
 v0.6.64（对齐循环第 84 轮）：配置字段消费守护——TestConfigFieldsAreConsumed 反射提取 12 个配置结构体的全部字段，逐个断言在配置包之外有非测试消费者（泛型名豁免）；新增字段忘了接线（baseUrl 式死配置）当轮就红。首跑审计 16 个特征字段全部在消费，零死配置。
-
-v0.6.63（对齐循环第 83 轮）：check 网关探测——agent baseUrl 逐个 TCP 探活（每个不同地址只探一次）：解析失败是 problem（确定性），连不上是 warning（可能是隧道/临时抖动），拼错网关从首条消息翻车提前到启动体检。测试四象限：活网关零输出、死端口仅警告、坏 URL 报 problem、重复地址只警一次。
 
 MIT

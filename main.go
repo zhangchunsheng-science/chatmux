@@ -281,6 +281,24 @@ func runClient(args []string, cfgPath string) int {
 	return 0
 }
 
+// newAdminServer builds the gateway's http.Server with slow-client bounds.
+// WriteTimeout is deliberately NOT set: /admin/ask legitimately holds a
+// response for the caller's timeoutSec (default 600s, caller-settable
+// higher) before answering — every handler bounds itself, so a fixed
+// write deadline would cut legitimate slow asks into connection resets.
+// ReadHeaderTimeout/ReadTimeout close the slowloris hole (an open
+// connection that never finishes its request holds a fd forever);
+// IdleTimeout reaps idle keep-alives (the dashboard polls every 2s and
+// stays well inside it).
+func newAdminServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+}
+
 // CLI 客户端兜底超时（fleet 与单实例客户端共用；fleet list 本就是
 // 5s/实例）：status/send 是管理面快操作，30s 足够；ask 网关最多等到
 // -timeout 秒才回答，再加缓冲。没有它们，一个卡死的网关能把 CLI 挂到
@@ -704,7 +722,7 @@ func runServer(cfgPath string) int {
 		go superviseChannel(ctx, c, inbound, minChannelBackoff, maxChannelBackoff)
 	}
 
-	srv := &http.Server{Handler: &mux}
+	srv := newAdminServer(&mux)
 	// bind synchronously: a taken port is a startup error like any
 	// other, reported through the return code — never log.Fatalf,
 	// which would kill the process (and, under test, the whole test

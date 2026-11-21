@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.69（对齐循环第 89 轮）
+
+- 服务端慢客户端收口（86-88 轮把客户端出口全部有界后，服务侧补齐）：网关 http.Server 原来零超时（Gosec G114）——不完成请求的开放连接可以永久占住 fd（slowloris）。现在 ReadHeaderTimeout 10s / ReadTimeout 60s / IdleTimeout 120s（看板 2s 轮询远在其内）。
+- WriteTimeout 刻意不设并在注释里说明：/admin/ask 按调用方 timeoutSec（默认 600s、可更高）合法长阻塞，固定写超时会把正当慢问切成分段错误；每个 handler 各自有界，不需要连接级写兜底。
+- 守护：TestAdminServerTimeouts 钉住三个值 + WriteTimeout 必须为 0（防未来"顺手补全"把 ask 弄断）。
+
 ## v0.6.68（对齐循环第 88 轮）
 
 - CLI 出口全面有界（86 轮 fleet 修复的同族问题在主客户端身上）：`chatmux status/stop/send/ask` 的 adminReq 原来零 ctx 零 deadline（ask 的提示语甚至写着"Ctrl-C 放弃"——把挂死当功能）；现在 status/stop/send 30s 快超时、ask 在 -timeout 之上加 30s 缓冲，超时变量与 fleet 共用（fleetQuickTimeout→clientQuickTimeout 泛化改名）。
