@@ -14,11 +14,14 @@ jobs:
           go-version: "1.21"
       - run: go vet ./...
       # timing-stress the flakiest package under runner conditions
-      # (2 cores, shuffled order, repeated) before the full sweep
+      # (2 cores, shuffled order, repeated) before the full sweep.
+      # -race is on permanently: the tests are I/O-timing-bound so
+      # instrumentation costs ~nothing locally (~54s vs ~52s), and
+      # 2-core shuffled reruns are where real data races actually surface.
       - name: agent package stress
         run: |
           set -o pipefail
-          GOMAXPROCS=2 go test ./internal/agent/ -count=3 -shuffle=on 2>&1 | tee stress.log
+          GOMAXPROCS=2 go test -race ./internal/agent/ -count=3 -shuffle=on 2>&1 | tee stress.log
       - name: go test
         run: |
           set -o pipefail

@@ -1,5 +1,10 @@
 # 更新日志
 
+## v0.6.72（对齐循环第 92 轮）
+
+- -race 常态化进 CI 的 agent stress 步：此前竞态检测只靠偶尔手动全量审计（v0.6.24/36/42 后没进 CI），真实竞态最常在 2 核 + shuffle + 重复时序下暴露——正是这个步骤的环境。本地实测 -race 几乎零代价（54s vs 52s，测试多为 I/O 时序型非 CPU 型），CI 时长不受影响。
+- 本轮自查顺带确认：工作树/产物全交付、无孤儿孙进程残留（91 轮阴性检查的泄漏已清）。
+
 ## v0.6.71（对齐循环第 91 轮）
 
 - CLI 子进程按进程组杀：exec.CommandContext 默认只 SIGKILL 直接子进程，而 CLI agent（claude/gemini/…）都会再 spawn 孙进程——/stop 或 turn 看门狗触发后孙进程存活泄漏，还占着继承的 stdout 管道。unix 上 Setpgid + Cancel 改为 kill(-pid)（整组 SIGKILL，ESRCH 容错）；windows 无跨二进制进程组，保持默认 Kill（build tag 分文件）。
