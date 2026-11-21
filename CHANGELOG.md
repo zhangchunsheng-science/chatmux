@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.70（对齐循环第 90 轮）
+
+- 附件下载每取有界：图像路径（attachImages 的 downloader 分支）原来裸用 turn ctx——上界只有 turnTimeout（默认 30m、后台 4×），一个卡死的媒体主机能把整个 turn 和它的会话占满半小时；语音路径其实早就有 5 分钟兜底，两条路径不对称。现在收敛为 attachmentDownloadTimeout（5 分钟，测试可收窄）统一覆盖：图像下载、音频下载×2、转写 HTTP 调用四个点。
+- 5 分钟的量纲：20MB 在 60KB/s 的烂链路上也搬得完；卡死主机 5 分钟放弃后，图像自动回退 handing 公开 URL 给视觉模型（已有行为，本就是兜底）。
+- 守护：wedgeDLChannel 模拟卡死主机（无字节直到 deadline 杀请求——真实传输同语义），100ms 预算下断言限时返回 + URL 回退。修复前该桩永堵 turn ctx，测试即挂。
+
 ## v0.6.69（对齐循环第 89 轮）
 
 - 服务端慢客户端收口（86-88 轮把客户端出口全部有界后，服务侧补齐）：网关 http.Server 原来零超时（Gosec G114）——不完成请求的开放连接可以永久占住 fd（slowloris）。现在 ReadHeaderTimeout 10s / ReadTimeout 60s / IdleTimeout 120s（看板 2s 轮询远在其内）。

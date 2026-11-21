@@ -166,6 +166,12 @@ func (r *Runtime) Busy() int {
 // forever.
 const defaultTurnTimeout = 30 * time.Minute
 
+// attachmentDownloadTimeout bounds every attachment fetch (audio or image)
+// independently of the turn budget: a wedged media host must not pin the
+// turn — and its session — for a whole turnTimeout. 5 minutes moves 20MB
+// even on a badly throttled link. Var so tests can shrink it.
+var attachmentDownloadTimeout = 5 * time.Minute
+
 // turnBudget resolves the agent's TurnTimeout (fallback default).
 func turnBudget(a *config.AgentConfig) time.Duration {
 	d := defaultTurnTimeout
@@ -996,7 +1002,7 @@ func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) stri
 		var mime string
 		switch {
 		case att.Key != "" && dl != nil:
-			dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			dctx, cancel := context.WithTimeout(ctx, attachmentDownloadTimeout)
 			d, m, err := dl.Download(dctx, att)
 			cancel()
 			if err != nil || len(d) == 0 {
@@ -1009,7 +1015,7 @@ func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) stri
 		case att.URL != "":
 			// channels without a downloader can still carry public
 			// audio URLs (discord CDN voice messages)
-			dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			dctx, cancel := context.WithTimeout(ctx, attachmentDownloadTimeout)
 			d, m, err := fetchURL(dctx, att.URL)
 			cancel()
 			if err != nil || len(d) == 0 {
@@ -1035,7 +1041,7 @@ func (r *Runtime) transcribeAudio(ctx context.Context, msg channel.Message) stri
 		if key == "" {
 			return ""
 		}
-		tctx, cancel2 := context.WithTimeout(ctx, 5*time.Minute)
+		tctx, cancel2 := context.WithTimeout(ctx, attachmentDownloadTimeout)
 		defer cancel2()
 		if txt, err := provider.TranscribeAudio(tctx, nil, p, provider.TranscribeArgs{
 			Model: tc.Model, APIKey: key, BaseURL: tc.BaseURL,
@@ -1213,7 +1219,9 @@ func (r *Runtime) attachImages(ctx context.Context, msg channel.Message, out *pr
 			// channels with a downloader own their URLs too: slack's
 			// url_private needs the bot token, the raw URL would only
 			// serve a login page to the vision provider
-			data, mime, err := dl.Download(ctx, att)
+			dctx, cancel := context.WithTimeout(ctx, attachmentDownloadTimeout)
+			data, mime, err := dl.Download(dctx, att)
+			cancel()
 			if err == nil && len(data) > 0 && len(data) <= channel.MaxAttachmentBytes {
 				p := filepath.Join(r.dataDir, "attachments", hashOf(firstNonEmpty(att.Key, att.URL))+"."+extOf(mime))
 				if saveFile(p, data) == nil {

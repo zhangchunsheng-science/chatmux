@@ -1545,3 +1545,43 @@ func TestFallbackChainCappedAndLoopCut(t *testing.T) {
 type echoProviderAnthropic struct{ echoProvider }
 
 func (e *echoProviderAnthropic) Name() string { return "anthropic" }
+
+// wedgeDLChannel mimics a wedged media host: no bytes until the deadline
+// kills the request — real HTTP transports honor ctx the same way.
+type wedgeDLChannel struct{ stubChannel }
+
+func (w *wedgeDLChannel) Download(ctx context.Context, _ channel.Attachment) ([]byte, string, error) {
+	<-ctx.Done()
+	return nil, "", ctx.Err()
+}
+
+// TestAttachImagesDownloadTimeout pins the per-fetch bound: a wedged image
+// download must give up after attachmentDownloadTimeout (not pin the turn
+// for a whole turnTimeout) and fall back to handing the public URL over.
+func TestAttachImagesDownloadTimeout(t *testing.T) {
+	old := attachmentDownloadTimeout
+	attachmentDownloadTimeout = 100 * time.Millisecond
+	defer func() { attachmentDownloadTimeout = old }()
+
+	cfg := &config.Config{
+		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
+		DefaultAgent: "default", DataDir: t.TempDir(),
+	}
+	reg := provider.NewRegistry()
+	reg.Register(&echoProvider{})
+	rt := NewRuntime(cfg, reg, map[string]channel.Channel{})
+	rt.chans["feishu"] = &wedgeDLChannel{stubChannel{sender: &fakeSender{}}}
+
+	var out provider.Msg
+	start := time.Now()
+	rt.attachImages(context.Background(), channel.Message{
+		Channel: "feishu", ChatID: "c1",
+		Attachments: []channel.Attachment{{Type: "image", Key: "k", URL: "https://x/img.png"}},
+	}, &out)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("wedged download pinned attachImages for %s; per-fetch timeout not wired", elapsed)
+	}
+	if len(out.Images) != 1 || out.Images[0] != "https://x/img.png" {
+		t.Fatalf("failed download must fall back to the public URL, got %v", out.Images)
+	}
+}
