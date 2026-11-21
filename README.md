@@ -391,6 +391,8 @@ CLI agent 可整体装进容器跑，宿主零接触（workingDir 挂到 /work�
 
 ## 状态
 
+v0.6.58（对齐循环第 78 轮）：定位并修复数月来的 CI 偶发失败（v0.6.31/46/52/56/57 同一根因）——agent 测试经 internal/agent/data/sessions.json 在磁盘上共享会话状态（空 DataDir 默认落到真实 data/ 目录，被 .gitignore 掩盖）；用 GOMAXPROCS=2 + -shuffle + -count=3 在本地 10 种子复现 4 次，全部测试改用 t.TempDir() 隔离后 10/10 全绿。CI 注解同步升级为 awk 整块捕获（含多行断言输出），失败时能直接看到断言全文。
+
 v0.6.57（对齐循环第 77 轮）：flake 追查装备升级——v0.6.56 的 ci 失败首次被
 注解点名（TestBusyAndShutdownDrain，0.00s 即败），但断言消息行（want X got Y）
 不在注解里仍无法定位。注解管道补 `_test.go:行号:` 断言行捕获；ci 新增
@@ -411,16 +413,5 @@ v0.6.53/54 的 ci 连带红（release 不受影响，双绿且资产齐全）。
 v0.6.54（对齐循环第 74 轮）：docwatch 可读性转移日志——被监控文件中途失去
 可读性（权限/挂载变化）原来每轮静默跳过，监控冻结且无人知晓；现在降级/
 恢复各记一条（每转移一次，不按 tick 刷屏），恢复后从上次状态继续比对。
-
-v0.6.53（对齐循环第 73 轮）：CI 失败可读化——三次同签名 flake（exit 1 无
-FAIL 注解）都卡在"日志 API 匿名 403、注解只有 exit code"。给 ci.yml 装
-problem matcher（`--- FAIL:`/`FAIL\t`/`panic:`/smoke `FAIL:` 全转注解，
-annotations API 匿名可读），smoke 失败改全量 dump daemon.log 进步骤日志；
-下次 flake 直接点名失败测试/原因，不再盲猜。
-
-v0.6.52（对齐循环第 72 轮）：/metrics 进 token 门——设了 adminToken 时逐
-agent 的调用量/token 数/错误计数与 /admin/* 一样要求鉴权（header 或
-`?token=`，Prometheus scrape 配置加参即可）；未设 token 保持开放（回环
-监听/防火墙场景不受影响）。
 
 MIT

@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.6.58（对齐循环第 78 轮）
+
+- 修复数月 CI 偶发失败的根因：agent 测试通过 `internal/agent/data/sessions.json` 共享磁盘会话状态——`NewRuntime` 里空 `DataDir` 默认落真实 `data/` 目录（被 .gitignore 掩盖，git status 不可见）。GOMAXPROCS=2 + `-shuffle` + `-count=3` 本地 10 种子复现 4 次，日志显示 TestSessionCommands 读到污染历史（`· 某人: ping ↳ ping`）后超时。
+- 全部 agent 测试改用 `t.TempDir()` 隔离（testRuntime 助手 + 15 处手写 Config 字面量），复现命令 10/10 全绿；顺带清掉 `internal/agent/data` 垃圾目录。
+- CI 失败注解升级为 awk 整块捕获：行级 grep 丢掉多行断言载荷（"got:" 全文），现在按 `--- FAIL:` 起块、`--- PASS:`/`ok`/`FAIL` 终块，每块最多 25 行。
+
 chatmux 逐轮打磨记录（对齐循环）。版本号与 git tag 一一对应；
 README 保留最近几轮，这里是从 v0.1 起的完整历史。
 

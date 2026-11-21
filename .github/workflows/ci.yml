@@ -35,12 +35,12 @@ jobs:
       - name: annotate failures
         if: failure()
         run: |
-          { grep -hE '^ *--- FAIL: |^FAIL\t|^panic: ' gotest.log stress.log 2>/dev/null || true
-            # assertion output: "    agent_test.go:984: want 1, got 2" —
-            # without these the --- FAIL header alone says nothing
-            grep -hE '^ +[a-z_0-9]+_test\.go:[0-9]+: ' gotest.log stress.log 2>/dev/null || true
+          { # whole failing-test blocks (headers, assertion output, the
+            # multi-line "got:" payloads) — line-by-line greps lost them
+            awk '/^--- FAIL:|^--- PASS:|^ok\t|^FAIL\t|^PASS/ && blk {blk=0} /^ *--- FAIL:/{blk=1;n=0} blk{print; if(++n>=25)blk=0}' gotest.log stress.log 2>/dev/null || true
+            grep -hE '^FAIL\t|^panic: ' gotest.log stress.log 2>/dev/null || true
             grep -hE '^FAIL: ' smoke.log 2>/dev/null || true
-          } | head -40 | while IFS= read -r l; do
+          } | head -60 | while IFS= read -r l; do
             echo "::error file=go.mod,line=1::${l}"
           done
       - uses: actions/upload-artifact@v4

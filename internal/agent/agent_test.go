@@ -64,10 +64,15 @@ func waitContains(t *testing.T, s *fakeSender, substr string) {
 	t.Fatalf("timed out waiting for reply containing %q; got:\n%s", substr, s.joined())
 }
 
-func testRuntime() (*Runtime, session.Key) {
+// testRuntime builds an isolated runtime: DataDir must point at a
+// fresh temp dir — with the empty default, NewRuntime falls back to
+// the real relative "data/" directory and tests share session state
+// through disk, which -shuffle/-count surfaced as cross-test flakes.
+func testRuntime(t *testing.T) (*Runtime, session.Key) {
 	off := false
 	on := true
 	cfg := &config.Config{
+		DataDir: t.TempDir(),
 		Agents: []config.AgentConfig{
 			{Name: "default", Provider: "openai"},
 			{Name: "gated", GroupMention: &on, Routes: []config.Route{{ChatID: "g1"}}},
@@ -81,7 +86,7 @@ func testRuntime() (*Runtime, session.Key) {
 }
 
 func TestMentionGate(t *testing.T) {
-	rt, _ := testRuntime()
+	rt, _ := testRuntime(t)
 
 	blocked := channel.Message{Channel: "feishu", ChatID: "g1", ChatType: "group", MentionedMe: false}
 	if mentionAllowed(rt.agentFor(blocked), blocked) {
@@ -106,7 +111,7 @@ func TestMentionGate(t *testing.T) {
 }
 
 func TestSlashCommands(t *testing.T) {
-	rt, key := testRuntime()
+	rt, key := testRuntime(t)
 	a := &rt.cfg.Agents[0]
 	s := &fakeSender{}
 	cmd := func(text string) bool {
@@ -168,7 +173,7 @@ func TestSlashCommands(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	rt, _ := testRuntime()
+	rt, _ := testRuntime(t)
 	st := rt.Status()
 	if st["turnsInFlight"].(int) != 0 {
 		t.Errorf("fresh runtime should have 0 turns")
@@ -188,7 +193,7 @@ func TestFirstNonEmpty(t *testing.T) {
 }
 
 func TestBuildPromptQuote(t *testing.T) {
-	rt, _ := testRuntime()
+	rt, _ := testRuntime(t)
 	msg := channel.Message{Text: "这个问题怎么看", Quoted: &channel.Quoted{UserName: "老王", Text: "房价要涨了吗"}}
 	got := rt.buildPrompt(msg)
 	if !strings.Contains(got, "[引用 老王 的消息]") || !strings.Contains(got, "房价要涨了吗") || !strings.Contains(got, "这个问题怎么看") {
@@ -209,7 +214,8 @@ func TestBgJobLifecycle(t *testing.T) {
 	// runtime with a provider that blocks until cancelled, so the job
 	// stays alive for /jobs and /stop
 	cfg := &config.Config{
-		Agents: []config.AgentConfig{{Name: "helper", Provider: "openai"}},
+		DataDir: t.TempDir(),
+		Agents:  []config.AgentConfig{{Name: "helper", Provider: "openai"}},
 	}
 	reg := provider.NewRegistry()
 	reg.Register(&blockingProvider{})
@@ -258,7 +264,8 @@ func TestFlowSubstitution(t *testing.T) {
 	// provider that echoes its prompt.
 	noop := false
 	cfg := &config.Config{
-		Agents: []config.AgentConfig{{Name: "echo", Provider: "openai", Model: "x"}},
+		DataDir: t.TempDir(),
+		Agents:  []config.AgentConfig{{Name: "echo", Provider: "openai", Model: "x"}},
 		Workflows: []config.WorkflowConfig{{
 			Name: "two-step",
 			Steps: []config.WorkflowStep{
@@ -315,7 +322,7 @@ func (b *blockingProvider) Stream(ctx context.Context, _ provider.Request) (<-ch
 }
 
 func TestSessionCommands(t *testing.T) {
-	rt, key := testRuntime()
+	rt, key := testRuntime(t)
 	a := &rt.cfg.Agents[0]
 	s := &fakeSender{}
 	cmd := func(text string) bool {
@@ -348,7 +355,7 @@ func TestSessionCommands(t *testing.T) {
 }
 
 func TestRemindCommand(t *testing.T) {
-	rt, key := testRuntime()
+	rt, key := testRuntime(t)
 	a := &rt.cfg.Agents[0]
 	s := &fakeSender{}
 	// 2s reminder should fire and reach the sender
@@ -365,7 +372,7 @@ func TestRemindCommand(t *testing.T) {
 }
 
 func TestAgentSwitch(t *testing.T) {
-	rt, key := testRuntime()
+	rt, key := testRuntime(t)
 	a := &rt.cfg.Agents[0]
 	s := &fakeSender{}
 	cmd := func(text string) bool {
@@ -417,6 +424,7 @@ func (e *tagProvider) Stream(_ context.Context, req provider.Request) (<-chan pr
 
 func TestOrchestrate(t *testing.T) {
 	cfg := &config.Config{
+		DataDir: t.TempDir(),
 		Agents: []config.AgentConfig{
 			{Name: "a1", Provider: "openai", Model: "m1"},
 			{Name: "a2", Provider: "openai", Model: "m2"},
@@ -477,6 +485,7 @@ func TestOncallCommand(t *testing.T) {
 
 func TestMemberEventWelcome(t *testing.T) {
 	cfg := &config.Config{
+		DataDir:      t.TempDir(),
 		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
 		DefaultAgent: "default",
 	}
@@ -516,6 +525,7 @@ func (c *stubChannel) Healthy() bool                                     { retur
 
 func TestMeetingEventAnnounce(t *testing.T) {
 	cfg := &config.Config{
+		DataDir:      t.TempDir(),
 		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
 		DefaultAgent: "default",
 		Meeting:      &config.MeetingConfig{Channel: "feishu", ChatID: "ops"},
@@ -533,6 +543,7 @@ func TestMeetingEventAnnounce(t *testing.T) {
 
 	// no meeting config → usage-only, no send
 	rt2 := NewRuntime(&config.Config{
+		DataDir:      t.TempDir(),
 		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
 		DefaultAgent: "default",
 	}, provider.NewRegistry(), map[string]channel.Channel{})
@@ -548,7 +559,7 @@ func TestMeetingEventAnnounce(t *testing.T) {
 }
 
 func TestInsightCommand(t *testing.T) {
-	rt, key := testRuntime()
+	rt, key := testRuntime(t)
 	rt.dataDir = t.TempDir()
 	ul := usage.New(rt.dataDir)
 	ul.Log(usage.Record{Agent: "default", Mode: "api", InputTokens: 100, OutputTokens: 200})
@@ -754,6 +765,7 @@ func (b *syncedBuffer) String() string {
 
 func TestTurnLogged(t *testing.T) {
 	cfg := &config.Config{
+		DataDir:      t.TempDir(),
 		Agents:       []config.AgentConfig{{Name: "default", Provider: "openai"}},
 		DefaultAgent: "default",
 	}
@@ -955,6 +967,7 @@ func TestBusyAndShutdownDrain(t *testing.T) {
 	// Busy() must track in-flight turns so shutdown paths can drain them;
 	// Shutdown() snapshots sessions synchronously before exit.
 	cfg := &config.Config{
+		DataDir:      t.TempDir(),
 		Agents:       []config.AgentConfig{{Name: "helper", Provider: "openai"}},
 		DefaultAgent: "helper",
 	}
@@ -1073,7 +1086,7 @@ func TestTurnWatchdogUnblocksChat(t *testing.T) {
 func TestAttachImagesDownloaderOwnsURL(t *testing.T) {
 	// a channel with a downloader owns its URLs (slack url_private needs
 	// auth): the attachment must land as a local file, not the raw URL
-	rt, key := testRuntime()
+	rt, key := testRuntime(t)
 	rt.dataDir = t.TempDir()
 	s := &fakeSender{}
 	dl := &dlChannel{stubChannel: stubChannel{sender: s}, data: []byte("imgdata")}
@@ -1092,7 +1105,7 @@ func TestAttachImagesDownloaderOwnsURL(t *testing.T) {
 
 func TestAttachImagesURLFallbackOnDownloadError(t *testing.T) {
 	// downloader fails → the URL still goes to the provider as-is
-	rt, key := testRuntime()
+	rt, key := testRuntime(t)
 	s := &fakeSender{}
 	rt.chans["feishu"] = &errDlChannel{stubChannel: stubChannel{sender: s}}
 	msg := channel.Message{Channel: "feishu", ChatID: key.ChatID, UserID: "u1", Text: "看图",
@@ -1119,7 +1132,7 @@ func TestTranscribeAudioViaURL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	rt, _ := testRuntime()
+	rt, _ := testRuntime(t)
 	rt.dataDir = t.TempDir()
 	rt.cfg.Transcribe = &config.TranscribeConfig{Enabled: true, Model: "whisper-1"}
 	rt.chans["feishu"] = &stubChannel{sender: &fakeSender{}} // no downloader
